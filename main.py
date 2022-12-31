@@ -187,7 +187,7 @@ def _process_fit_data(path, fname, cache=None):
     # Load the FIT file for analysis
     # Note: This is some rando code from github and is super slow
     try:
-	    fitfile = fitanalysis.Activity(file)
+        fitfile = fitanalysis.Activity(file)
     except TypeError:
         # fitanalysis seems to puke on non-Garmin FIT files
         return hash, np.timedelta64(0), np.NaN
@@ -207,6 +207,57 @@ def _process_fit_data(path, fname, cache=None):
         ftp = np.NaN
 
     return hash, offset, ftp
+
+def load_mnd_data(path, eer_func, window):
+    """Process weight and calorie data from a MyNetDiary data export
+
+    Arguments:
+        path: Path to MyNetDiary export directory
+        eer_func: Lambda wrapper for eer_male or eer_female (above)
+                  with height and dob fields specified by caller
+        window: Rolling window (in days) for averaging calculations
+
+    Returns:
+        df_weight: A Pandas dataframe of processed weight data
+        df_calories: A Pandas dataframe of processed calorie data"""
+
+    # Load MyNetDiary data
+    mnd_data = merge_excel_files(path)
+
+    # Construct a table of actual & smoothed weights
+    df_weight = pd.DataFrame()
+    df_weight['Actual'] = mnd_data['Measurements'].query('Measurement == "Body Weight"').set_index('Date')['Value']
+    smoothed_weight = df_weight['Actual'].resample('D').interpolate().rolling(5, center=True).mean()
+    df_weight['Smoothed'] = smoothed_weight
+
+    # Calculate weight loss rate by regressing over a rolling window
+    df_weight['Rate'] = df_weight['Actual'].resample('D').interpolate().rolling(window, center=True).apply(
+        lambda x: time_series_linear_regression(x, 1, 'W')[0].iloc[0]['Rate'])
+
+    # Construct a table of baseline (weight maintenance), exercise and food calories
+    df_calories = pd.DataFrame()
+    df_calories['Food'] = mnd_data['Food'].resample('D', on='Date & Time')['Calories, cals'].sum()
+    df_calories['Exercise'] = mnd_data['Exercise'].resample('D', on='Date & Time')['Calories'].sum()
+    df_calories['Baseline'] = eer_func(smoothed_weight)
+    df_calories.index.rename('Date', inplace=True)
+    df_calories.fillna(0, inplace=True)
+
+    # Create an 'adjusted food' column that fills in a rolling average for missing days, then calculate net
+    food_masked = df_calories['Food'].mask(df_calories['Food'] == 0)
+    df_calories['Food Adj'] = food_masked.fillna(food_masked.rolling(window, min_periods=window//2,
+                                                                     center=True).mean())
+    df_calories['Net Daily'] = df_calories['Food Adj'] - df_calories['Baseline'] - df_calories['Exercise']
+
+    # Calculate rolling averages of general calorie trends
+    df_calories['Net Observed'] = df_weight['Rate'].resample('D').interpolate() * 500
+    df_calories['Net Recorded'] = df_calories['Net Daily'].rolling(window, center=True).mean()
+    df_calories['Missing'] = df_calories['Net Observed'] - df_calories['Net Recorded']
+    df_calories['Accuracy'] = (df_calories['Food Adj'].rolling(window, center=True).mean() /
+                               ((df_calories['Baseline'] +
+                                 df_calories['Exercise']).rolling(window, center=True).mean() +
+                                df_calories['Net Observed']))
+
+    return df_weight, df_calories
 
 def load_strava_activities(path, recalculate=False):
     """Loads bicycling activity data from a Strava data export
