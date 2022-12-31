@@ -256,6 +256,7 @@ def load_strava_activities(path, recalculate=False):
     df['Date'] = pd.to_datetime(csv['Activity Date']) + calcs['UTC Offset']
     df['Description'] = csv['Activity Name']
     df['Bicycle'] = csv['Activity Gear']
+    df['Trainer'] = (csv['Activity Type'] == 'Virtual Ride') | (csv['Elevation Gain'] == 0)
     df['Distance'] = csv['Distance'] * 0.6213712 # Convert km to mi
     df['Elevation'] = csv['Elevation Gain'] / 0.3048 # Convert m to ft
     df['Elapsed Time'] = csv['Elapsed Time'] # In seconds
