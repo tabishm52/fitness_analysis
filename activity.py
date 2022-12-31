@@ -2,6 +2,9 @@ import os
 import hashlib
 import gzip
 
+import multiprocessing
+import functools
+
 import pandas as pd
 import numpy as np
 
@@ -14,7 +17,7 @@ def get_cache_path():
     """Utility function to retrieve path to cached results"""
     return os.path.join(os.path.dirname(__file__), 'cache.hdf')
 
-def process_fit_file(path, fname, cache=None):
+def process_fit_file(fname, path, cache=None):
     """Run calculations on a single FIT file"""
 
     # Calculate hash of file - to make sure cached results are valid
@@ -83,8 +86,10 @@ def process_activities(path, files, recalculate):
     # Run calculations on all FIT files, leveraging cached results
     calcs = pd.DataFrame()
     calcs['Filename'] = files
-    calcs['Hash'], calcs['UTC Offset'], calcs['Observed FTP'] = \
-        zip(*calcs['Filename'].map(lambda x: process_fit_file(path, x, cache)))
+    processor = functools.partial(process_fit_file, path=path, cache=cache)
+    with multiprocessing.Pool() as p:
+        results = p.map(processor, calcs['Filename'])
+    calcs['Hash'], calcs['UTC Offset'], calcs['Observed FTP'] = zip(*results)
 
     # Add new results to cache, deduplicate and save
     new_cache = pd.concat([calcs.set_index('Filename', drop=True), cache])
@@ -92,4 +97,3 @@ def process_activities(path, files, recalculate):
     new_cache.to_hdf(get_cache_path(), 'strava_calcs', mode='w')
 
     return calcs
-
