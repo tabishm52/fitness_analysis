@@ -248,15 +248,6 @@ def load_mnd_data(path, eer_func, window):
                                                                      center=True).mean())
     df_calories['Net Daily'] = df_calories['Food Adj'] - df_calories['Baseline'] - df_calories['Exercise']
 
-    # Calculate rolling averages of general calorie trends
-    df_calories['Net Observed'] = df_weight['Rate'].resample('D').interpolate() * 500
-    df_calories['Net Recorded'] = df_calories['Net Daily'].rolling(window, center=True).mean()
-    df_calories['Missing'] = df_calories['Net Observed'] - df_calories['Net Recorded']
-    df_calories['Accuracy'] = (df_calories['Food Adj'].rolling(window, center=True).mean() /
-                               ((df_calories['Baseline'] +
-                                 df_calories['Exercise']).rolling(window, center=True).mean() +
-                                df_calories['Net Observed']))
-
     return df_weight, df_calories
 
 def load_strava_activities(path, recalculate=False):
