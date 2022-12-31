@@ -16,7 +16,7 @@ BAD_POWER_DATA = ['activities/3799945079.fit.gz']
 
 def _get_cache_path():
     """Utility function to retrieve path to cached results"""
-    return os.path.splitext(__file__)[0] + '.cache'
+    return os.path.join(os.path.dirname(__file__), 'cache.hdf')
 
 def merge_excel_files(path):
     """Loads and merges data from all Excel files in a directory
