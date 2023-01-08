@@ -10,9 +10,6 @@ import numpy as np
 
 import fitdecode
 
-# A list of files where I happened to record janky power data
-BAD_POWER_DATA = ['activities/3799945079.fit.gz']
-
 def get_cache_path():
     """Utility function to retrieve path to cached results"""
     return os.path.join(os.path.dirname(__file__), 'cache.hdf')
@@ -100,10 +97,6 @@ def process_one_activity(fname, path, cache=None):
         offset, ftp = process_fit_data(records, session, activity)
     else:
         offset = np.timedelta64(0)
-        ftp = np.NaN
-
-    # Drop FTP if in list of bad files
-    if fname in BAD_POWER_DATA:
         ftp = np.NaN
 
     return hash, offset, ftp
