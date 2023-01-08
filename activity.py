@@ -8,7 +8,7 @@ import functools
 import pandas as pd
 import numpy as np
 
-import fitanalysis
+import fitdecode
 
 # A list of files where I happened to record janky power data
 BAD_POWER_DATA = ['activities/3799945079.fit.gz']
@@ -17,28 +17,55 @@ def get_cache_path():
     """Utility function to retrieve path to cached results"""
     return os.path.join(os.path.dirname(__file__), 'cache.hdf')
 
-def process_fit_file(file):
-    """Run calculations on a single FIT file"""
+def copy_fit_frames(fit_file):
+    """Copy FIT data from a file-like object into a list of frames"""
+    fit = fitdecode.FitReader(fit_file, processor=fitdecode.StandardUnitsDataProcessor())
+    return [f for f in fit
+            if f.frame_type == fitdecode.FIT_FRAME_DATA and f.mesg_type is not None]
 
-    # Load the FIT file for analysis
-    # Note: This is some rando code from github and is super slow
-    try:
-        fitfile = fitanalysis.Activity(file)
-    except TypeError:
-        # fitanalysis seems to puke on non-Garmin FIT files
-        return np.timedelta64(0), np.NaN
+def extract_fit_dicts(frames, name):
+    """Extract FIT data (of a given name) from a list of frames into a generator of dicts"""
+    return (dict((d.name, d.value) for d in f.fields if d.field is not None)
+            for f in frames if f.name == name)
+
+def load_fit_file(file, gzipped=False):
+    """Load a FIT file into a DataFrame of records and dicts of session and activity data"""
+
+    # Load the file
+    if gzipped:
+        with gzip.open(file) as fit_file:
+            frames = copy_fit_frames(fit_file)
+    else:
+        with open(file) as fit_file:
+            frames = copy_fit_frames(fit_file)
+
+    # Compose records into a DataFrame - the actual time-series data from the FIT file
+    # Note FIT files occasionally have duplicate timestamps, just drop those
+    records = pd.DataFrame(extract_fit_dicts(frames, 'record')).set_index('timestamp', drop=True)
+    records = records[~records.index.duplicated()]
+
+    # 'session' and 'activity' are summary data, usually at the end of the file
+    session = next(extract_fit_dicts(reversed(frames), 'session'))
+    activity = next(extract_fit_dicts(reversed(frames), 'activity'))
+
+    return records, session, activity
+
+def process_fit_data(records, session, activity):
+    """Run calculations on data from a FIT file"""
 
     # Calculate UTC offset if available in FIT file
+    # Note some files have a nonsense local_timestamp, so throw those out
     try:
-        m = next(fitfile.get_messages('activity'))
-        offset = np.timedelta64(m.get('local_timestamp').value - m.get('timestamp').value)
-    except AttributeError:
+        offset = np.timedelta64(activity['local_timestamp'] - \
+                 activity['timestamp'].replace(tzinfo=None))
+        if np.abs(offset) > np.timedelta64(1, 'D'):
+            offset = np.timedelta64(0)
+    except KeyError:
         offset = np.timedelta64(0)
 
     # Calculate 20-min average power (FTP) if available in FIT file
-    if fitfile.has_power:
-        p = fitfile.power.droplevel(level='block')
-        ftp = np.max(fitanalysis.util.moving_average(p, 20*60))
+    if 'power' in records.columns:
+        ftp = np.max(records.power.resample('S').ffill().rolling(20*60).mean())
     else:
         ftp = np.NaN
 
@@ -59,17 +86,18 @@ def process_one_activity(fname, path, cache=None):
     except KeyError:
         pass
 
-    # Strava seems to gzip some but not all files; run gunzip if needed
+    # Strava's data export seems to gzip some but not all files
     root, ext = os.path.splitext(fname)
     if ext == '.gz':
-        file = gzip.open(full_path)
+        gzipped = True
         root, ext = os.path.splitext(root)
     else:
-        file = full_path
+        gzipped = False
 
     # Return null data if this is not a FIT file (e.g. for GPX files)
     if ext == '.fit':
-        offset, ftp = process_fit_file(file)
+        records, session, activity = load_fit_file(full_path, gzipped)
+        offset, ftp = process_fit_data(records, session, activity)
     else:
         offset = np.timedelta64(0)
         ftp = np.NaN
