@@ -73,7 +73,8 @@ def load_strava_activities(path, recalculate=False):
     # Construct the return DataFrame, converting units as appropriate
     # Note timestamps are converted from UTC to local time when offset is available
     df = pd.DataFrame()
-    df['Date'] = pd.to_datetime(csv['Activity Date']) + calcs['UTC Offset']
+    df['Date'] = pd.to_datetime(csv['Activity Date']).add(calcs['UTC Offset'],
+                                                          fill_value=np.timedelta64(0))
     df['Description'] = csv['Activity Name']
     df['Bicycle'] = csv['Activity Gear']
     df['Trainer'] = (csv['Activity Type'] == 'Virtual Ride') | (csv['Elevation Gain'] == 0)
