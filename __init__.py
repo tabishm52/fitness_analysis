@@ -3,5 +3,6 @@ from .utils import time_series_linear_regression, time_series_constant_regressio
 from .utils import eer_male, eer_female
 
 from .parse_fit import parse_fit
+from .parse_tcx import parse_tcx
 
 from .main import load_mnd_data, load_strava_activities

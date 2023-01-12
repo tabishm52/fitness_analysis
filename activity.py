@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 
 from .parse_fit import parse_fit
+from .parse_tcx import parse_tcx
 
 def get_cache_path():
     """Utility function to retrieve path to cached results"""
@@ -34,6 +35,17 @@ def process_fit_data(points, laps, extra):
 
     return offset, ftp
 
+def process_tcx_data(points, laps, extra):
+    """Run calculations on data from a TCX file"""
+
+    # Calculate 20-min average power (FTP) if available in TCX file
+    if 'Watts' in points.columns:
+        ftp = np.max(points.Watts.resample('S').ffill().rolling(20*60).mean())
+    else:
+        ftp = np.NaN
+
+    return np.timedelta64(0), ftp
+
 def process_one_activity(fname, path, cache=None):
     """Run calculations on a single Strava activity"""
 
@@ -58,6 +70,9 @@ def process_one_activity(fname, path, cache=None):
     if ext == '.fit':
         points, laps, extra = parse_fit(full_path)
         offset, ftp = process_fit_data(points, laps, extra)
+    elif ext == '.tcx':
+        points, laps, extra = parse_tcx(full_path)
+        offset, ftp = process_tcx_data(points, laps, extra)
     else:
         offset = np.timedelta64(0)
         ftp = np.NaN
