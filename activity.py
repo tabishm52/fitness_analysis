@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 
 from .parse_fit import parse_fit
-from .parse_tcx import parse_tcx
+from .parse_tcx_gpx import parse_tcx
 
 def get_cache_path():
     """Utility function to retrieve path to cached results"""
