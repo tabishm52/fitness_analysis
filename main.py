@@ -70,11 +70,26 @@ def load_strava_activities(path, recalculate=False):
     # Run a set of calculations on all FIT files
     calcs = activity.process_activities(path, csv['Filename'].dropna(), recalculate)
 
+    # This is kinda ugly - convert all dates to local time (or a default) and
+    # then drop the tzinfo so that weekly/daily calcs match Strava
+    def activity_local_times():
+        for i, _ in csv.iterrows():
+            if (i not in calcs.index
+                or pd.isna(calcs.loc[i, 'Timezone'])
+                or csv.loc[i, 'Activity Type'] == 'Virtual Ride'):
+                yield (pd.to_datetime(csv.loc[i, 'Activity Date'])
+                       .tz_localize('UTC')
+                       .tz_convert('America/Los_Angeles')
+                       .replace(tzinfo=None))
+            else:
+                yield (pd.to_datetime(csv.loc[i, 'Activity Date'])
+                       .tz_localize('UTC')
+                       .tz_convert(calcs.loc[i, 'Timezone'])
+                       .replace(tzinfo=None))
+    
     # Construct the return DataFrame, converting units as appropriate
-    # Note timestamps are converted from UTC to local time when offset is available
     df = pd.DataFrame()
-    df['Date'] = pd.to_datetime(csv['Activity Date']).add(calcs['UTC Offset'],
-                                                          fill_value=np.timedelta64(0))
+    df['Date'] = pd.Series(activity_local_times(), csv.index)
     df['Description'] = csv['Activity Name']
     df['Bicycle'] = csv['Activity Gear']
     df['Trainer'] = (csv['Activity Type'] == 'Virtual Ride') | (csv['Elevation Gain'] == 0)
@@ -83,6 +98,6 @@ def load_strava_activities(path, recalculate=False):
     df['Elapsed Time'] = csv['Elapsed Time'] # In seconds
     df['Moving Time'] = csv['Moving Time'] # In seconds
     df['Observed FTP'] = calcs['Observed FTP'] # In watts
-    df.set_index('Date', inplace=True, drop=True)
+    df.set_index('Date', inplace=True)
 
     return df.sort_index()
