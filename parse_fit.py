@@ -31,9 +31,9 @@ def parse_fit(file):
               unzipped before processing.
 
     Returns:
-        A tuple of (points, laps, extra)
+        A tuple of (records, laps, extra)
 
-        points: Time-indexed DataFrame of sensor data recorded during activity
+        records: Time-indexed DataFrame of sensor data recorded during activity
         laps: DataFrame of lap information from the activity
         extra: Dict of selected additional information from the activity
     """
@@ -56,8 +56,8 @@ def parse_fit(file):
         frames = copy_fit_frames(file)
 
     # Note FIT files occasionally have duplicate timestamps, just drop those
-    points = pd.DataFrame(extract_fit_dicts(frames, ['record'])).set_index('timestamp')
-    points = points[~points.index.duplicated()]
+    records = pd.DataFrame(extract_fit_dicts(frames, ['record'])).set_index('timestamp')
+    records = records[~records.index.duplicated()]
 
     laps = pd.DataFrame(extract_fit_dicts(frames, ['lap']))
 
@@ -68,4 +68,4 @@ def parse_fit(file):
     for d in extract_fit_dicts(frames, ['file_id', 'sport', 'session', 'activity']):
         extra.update(d)
 
-    return points, laps, extra
+    return records, laps, extra

@@ -57,9 +57,9 @@ def parse_tcx(file):
               transparently unzipped before processing.
 
     Returns:
-        A tuple of (points, laps, extra)
+        A tuple of (records, laps, extra)
 
-        points: Time-indexed DataFrame of sensor data recorded during activity
+        records: Time-indexed DataFrame of sensor data recorded during activity
         laps: DataFrame of lap information from the activity
         extra: Dict of selected additional information from the activity
     """
@@ -69,10 +69,10 @@ def parse_tcx(file):
     root = etree.parse(file, parser).getroot()
 
     # TCX files occasionally have duplicate timestamps, just drop those
-    points = pd.DataFrame(dict(extract_xml_fields(element))
-                          for element in root.iter('{*}Trackpoint'))
-    points = cleanup_xml_dataframe(points, 'Time').set_index('Time')
-    points = points[~points.index.duplicated()]
+    records = pd.DataFrame(dict(extract_xml_fields(element))
+                           for element in root.iter('{*}Trackpoint'))
+    records = cleanup_xml_dataframe(records, 'Time').set_index('Time')
+    records = records[~records.index.duplicated()]
 
     # This drops all Trackpoints from the XML data so they don't show up in lap data
     for element in root.iterfind('.//{*}Track'):
@@ -86,7 +86,7 @@ def parse_tcx(file):
     for element in root.iter('{*}Creator'):
         extra.update(dict(extract_xml_fields(element)))
 
-    return points, laps, extra
+    return records, laps, extra
 
 
 def parse_gpx(file):
@@ -100,9 +100,9 @@ def parse_gpx(file):
               transparently unzipped before processing.
 
     Returns:
-        A tuple of (points, laps, extra)
+        A tuple of (records, laps, extra)
 
-        points: Time-indexed DataFrame of sensor data recorded during activity
+        records: Time-indexed DataFrame of sensor data recorded during activity
         laps: An empty Pandas DataFrame provided for compatibility with other parsers
         extra: Dict of additional information from the activity
     """
@@ -114,10 +114,10 @@ def parse_gpx(file):
     parser = etree.XMLParser(recover=True)
     root = etree.parse(file, parser).getroot()
 
-    points = pd.DataFrame(dict(extract_xml_fields(element))
-                          for element in root.iter('{*}trkpt'))
-    points = cleanup_xml_dataframe(points, 'time').set_index('time')
-    points = points[~points.index.duplicated()]
+    records = pd.DataFrame(dict(extract_xml_fields(element))
+                           for element in root.iter('{*}trkpt'))
+    records = cleanup_xml_dataframe(records, 'time').set_index('time')
+    records = records[~records.index.duplicated()]
 
     for element in root.iterfind('.//{*}trkseg'):
         element.getparent().remove(element)
@@ -127,4 +127,4 @@ def parse_gpx(file):
         extra.update(dict(extract_xml_fields(element)))
     extra.pop('schemaLocation', None)
 
-    return points, pd.DataFrame(), extra
+    return records, pd.DataFrame(), extra
