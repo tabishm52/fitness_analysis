@@ -15,7 +15,7 @@ from .parse_tcx_gpx import parse_tcx, parse_gpx
 
 def get_cache_path():
     """Utility function to retrieve path to cached results"""
-    return os.path.join(os.path.dirname(__file__), 'cache.hdf')
+    return os.path.join(os.path.dirname(__file__), 'cache.csv')
 
 
 def process_one_activity(fname, path, cache=None):
@@ -89,7 +89,7 @@ def process_activities(path, files, recalculate=False):
 
     # Load cached calculation results if available
     try:
-        cache = pd.read_hdf(get_cache_path(), 'strava_calcs')
+        cache = pd.read_csv(get_cache_path()).set_index('Filename')
         if isinstance(recalculate, str):
             cache = cache[~cache.index.isin([recalculate])]
         elif hasattr(recalculate, '__iter__'):
@@ -108,8 +108,8 @@ def process_activities(path, files, recalculate=False):
     calcs['Hash'], calcs['Timezone'], calcs['Observed FTP'] = zip(*results)
 
     # Add new results to cache, deduplicate and save
-    new_cache = pd.concat([calcs.set_index('Filename', drop=True), cache])
+    new_cache = pd.concat([calcs.set_index('Filename'), cache])
     new_cache = new_cache[~new_cache.index.duplicated()].sort_index()
-    new_cache.to_hdf(get_cache_path(), 'strava_calcs', mode='w')
+    new_cache.to_csv(get_cache_path())
 
     return calcs

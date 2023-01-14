@@ -161,4 +161,4 @@ cython_debug/
 
 # Project-specific ignores
 .DS_Store
-cache.hdf
+cache.csv
