@@ -40,7 +40,7 @@ def parse_fit(file):
 
     try:
         _, ext = os.path.splitext(file)
-        is_gzipped = True if ext == '.gz' else False
+        is_gzipped = True if ext.lower() == '.gz' else False
         is_path = True
     except TypeError:
         is_path = False

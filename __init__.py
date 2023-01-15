@@ -4,5 +4,6 @@ from .utils import eer_male, eer_female
 
 from .parse_fit import parse_fit
 from .parse_tcx_gpx import parse_tcx, parse_gpx
+from .parse_activity import ActivityParser
 
 from .main import load_mnd_data, load_strava_activities

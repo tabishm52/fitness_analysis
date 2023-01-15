@@ -9,8 +9,11 @@ import numpy as np
 
 import timezonefinder
 
-from .parse_fit import parse_fit
-from .parse_tcx_gpx import parse_tcx, parse_gpx
+from . import parse_activity
+
+
+activity_parser = parse_activity.ActivityParser()
+tz_finder = timezonefinder.TimezoneFinder()
 
 
 def get_cache_path():
@@ -33,37 +36,15 @@ def process_one_activity(fname, path, cache=None):
     except KeyError:
         pass
 
-    # Strava's data export seems to gzip some but not all files
-    root, ext = os.path.splitext(fname)
-    if ext == '.gz':
-        _, ext = os.path.splitext(root)
-
-    # Parse data and identify relevant columns
-    if ext == '.fit':
-        records, _, _ = parse_fit(full_path)
-        lat_col = 'position_lat'
-        lng_col = 'position_long'
-        power_col = 'power'
-    elif ext == '.tcx':
-        records, _, _ = parse_tcx(full_path)
-        lat_col = 'LatitudeDegrees'
-        lng_col = 'LongitudeDegrees'
-        power_col = 'Watts'
-    elif ext == '.gpx':
-        records, _, _ = parse_gpx(full_path)
-        lat_col = 'lat'
-        lng_col = 'lon'
-        power_col = 'pow' # Actually GPX files don't seem to have power
-    else:
-        raise RuntimeError(f"File type not supported for {fname}")
+    # Load time-series data from the file
+    records, _, _ = activity_parser.parse(full_path)
 
     # Determine timezone using first valid lat,lng position in the file
     try:
-        tf = timezonefinder.TimezoneFinder()
-        points = records[[lat_col, lng_col]]
+        points = records[['latitude', 'longitude']]
         idx = points.apply(pd.Series.first_valid_index).max()
         lat, lng = points.loc[idx]
-        tz = tf.timezone_at(lng=lng, lat=lat)
+        tz = tz_finder.timezone_at(lng=lng, lat=lat)
     except KeyError:
         # No valid lat,lng data in file
         tz = np.NaN
@@ -71,7 +52,7 @@ def process_one_activity(fname, path, cache=None):
     # Estimate FTP by calculating maximum 20-minute effort in file
     try:
         ftp = np.max(
-                records[power_col]
+                records['power']
                 .resample('S')
                 .ffill()
                 .rolling(20*60)
