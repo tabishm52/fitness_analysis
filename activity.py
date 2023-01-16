@@ -9,10 +9,10 @@ import numpy as np
 import pandas as pd
 import timezonefinder
 
-from . import parse_activity
+import activity_parser
 
 
-activity_parser = parse_activity.ActivityParser()
+parser = activity_parser.ActivityParser()
 tz_finder = timezonefinder.TimezoneFinder()
 
 
@@ -38,7 +38,7 @@ def process_one_activity(fname, path, cache=None):
         pass
 
     # Load time-series data from the file
-    records, _, _ = activity_parser.parse(full_path)
+    records, _, _ = parser.parse(full_path)
 
     # Determine timezone using first valid lat,lng position in the file
     try:
