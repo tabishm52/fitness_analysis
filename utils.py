@@ -5,7 +5,6 @@ import os
 import numpy as np
 import pandas as pd
 from scipy.ndimage.interpolation import shift
-import sklearn.linear_model
 import sklearn.metrics
 
 import pwlf
@@ -62,22 +61,12 @@ def time_series_linear_regression(series, num_segments, units):
     # Convert time index to a uint array (in us) for scipy calculations
     x = series.index.to_numpy().astype('datetime64[us]').astype(np.uint64)
 
-    if num_segments == 1:
-        # Do an ordinary linear regression
-        model = sklearn.linear_model.LinearRegression()
-        model.fit(x[:, np.newaxis], series.values)
-        breakpoints = np.array([x[0], x[-1]])
-        values = model.predict(breakpoints[:, np.newaxis])
-        slopes = np.array([model.coef_[0], np.NaN])
-        regression = model.predict(x[:, np.newaxis])
-
-    else:
-        # Do a multi-segment piecewise linear regression
-        piecewise = pwlf.PiecewiseLinFit(x, series.values)
-        breakpoints = piecewise.fit(num_segments)
-        values = piecewise.predict(breakpoints)
-        slopes = np.append(piecewise.calc_slopes(), [np.NaN])
-        regression = piecewise.predict(x)
+    # Do a multi-segment piecewise linear regression
+    piecewise = pwlf.PiecewiseLinFit(x, series.values)
+    breakpoints = piecewise.fit(num_segments)
+    values = piecewise.predict(breakpoints)
+    slopes = np.append(piecewise.calc_slopes(), [np.NaN])
+    regression = piecewise.predict(x)
 
     # Get the conversion factor to desired rate units
     c = np.uint64(np.timedelta64(np.timedelta64(1, units), 'us'))
