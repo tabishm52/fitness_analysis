@@ -51,13 +51,12 @@ def parse_fit(file):
 
     try:
         _, ext = os.path.splitext(file)
-        is_gzipped = True if ext.lower() == '.gz' else False
         is_path = True
     except TypeError:
         is_path = False
 
     if is_path:
-        if is_gzipped:
+        if ext.lower() == '.gz':
             with gzip.open(file) as fit_file:
                 frames = copy_fit_frames(fit_file)
         else:
@@ -76,7 +75,7 @@ def parse_fit(file):
     # This is a bit clumsy - if there is more than one frame of a given type or
     # fields with the same name across frame types, then you'll get whichever
     # value appears last in the FIT file
-    extra = dict()
+    extra = {}
     extra_names = ['file_id', 'sport', 'session', 'activity']
     for d in extract_fit_dicts(frames, extra_names):
         extra.update(d)

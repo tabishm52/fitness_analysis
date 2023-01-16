@@ -16,11 +16,14 @@ def extract_xml_fields(element):
 
         # In a TCX file, some values are buried in a 'Value' element
         if el.text is None or el.text.isspace():
-            child = next(el.iterchildren())
-            parent_localname = etree.QName(el).localname
-            child_localname = etree.QName(child).localname
-            if child_localname == 'Value':
-                yield (parent_localname, child.text)
+            try:
+                child = next(el.iterchildren())
+                parent_localname = etree.QName(el).localname
+                child_localname = etree.QName(child).localname
+                if child_localname == 'Value':
+                    yield (parent_localname, child.text)
+            except StopIteration:
+                pass
 
         # But most values are recorded as leaf element text
         else:
@@ -86,7 +89,7 @@ def parse_tcx(file):
                         for element in root.iter('{*}Lap'))
     laps = cleanup_xml_dataframe(laps, 'StartTime')
 
-    extra = dict()
+    extra = {}
     for element in root.iter('{*}Creator'):
         extra.update(dict(extract_xml_fields(element)))
 
@@ -128,7 +131,7 @@ def parse_gpx(file):
     for element in root.iterfind('.//{*}trkseg'):
         element.getparent().remove(element)
 
-    extra = dict()
+    extra = {}
     for element in root.iter():
         extra.update(dict(extract_xml_fields(element)))
     extra.pop('schemaLocation', None)

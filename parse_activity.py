@@ -235,6 +235,6 @@ class ActivityParser():
             # Note GPX files have no lap information
 
         else:
-            raise RuntimeError(f"File type not supported: {ext}")
+            raise RuntimeError(f'File type not supported: {ext}')
 
         return records, laps, extra

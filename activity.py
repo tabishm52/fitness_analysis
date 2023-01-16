@@ -27,12 +27,12 @@ def process_one_activity(fname, path, cache=None):
 
     # Calculate hash of file - to make sure cached results are valid
     full_path = os.path.join(path, fname)
-    with open(full_path, "rb") as f:
-        hash = hashlib.blake2b(f.read(), digest_size=8).hexdigest()
+    with open(full_path, 'rb') as f:
+        h = hashlib.blake2b(f.read(), digest_size=8).hexdigest()
 
     # Short-circuit and return cached results if available
     try:
-        if cache is not None and cache.loc[fname, 'Hash'] == hash:
+        if cache is not None and cache.loc[fname, 'Hash'] == h:
             return cache.loc[fname].to_numpy()
     except KeyError:
         pass
@@ -65,7 +65,7 @@ def process_one_activity(fname, path, cache=None):
         # No power data in file
         ftp = np.NaN
 
-    return hash, tz, ftp
+    return h, tz, ftp
 
 
 def process_activities(files, path, recalculate=False):

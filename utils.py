@@ -24,7 +24,7 @@ def merge_excel_files(path):
         A dictionary of DataFrames
     """
 
-    data = dict()
+    data = {}
     files = os.listdir(path)
     files.sort()
 
