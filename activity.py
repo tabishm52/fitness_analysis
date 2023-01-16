@@ -1,12 +1,12 @@
-import os
-import hashlib
+"""Functions for calculating metrics on Strava bicycling activities."""
 
-import multiprocessing
 import functools
+import hashlib
+import multiprocessing
+import os
 
-import pandas as pd
 import numpy as np
-
+import pandas as pd
 import timezonefinder
 
 from . import parse_activity
@@ -17,12 +17,13 @@ tz_finder = timezonefinder.TimezoneFinder()
 
 
 def get_cache_path():
-    """Utility function to retrieve path to cached results"""
+    """Utility function to retrieve path to cached results."""
+
     return os.path.join(os.path.dirname(__file__), 'cache.csv')
 
 
 def process_one_activity(fname, path, cache=None):
-    """Run calculations on a single Strava activity"""
+    """Run calculations on a single Strava activity."""
 
     # Calculate hash of file - to make sure cached results are valid
     full_path = os.path.join(path, fname)
@@ -51,13 +52,15 @@ def process_one_activity(fname, path, cache=None):
 
     # Estimate FTP by calculating maximum 20-minute effort in file
     try:
-        ftp = np.max(
+        ftp = (
+            np.max(
                 records['power']
                 .resample('S')
                 .ffill()
                 .rolling(20*60)
                 .mean()
             )
+        )
     except KeyError:
         # No power data in file
         ftp = np.NaN
@@ -65,8 +68,23 @@ def process_one_activity(fname, path, cache=None):
     return hash, tz, ftp
 
 
-def process_activities(path, files, recalculate=False):
-    """Run calculations on a set of Strava activities"""
+def process_activities(files, path, recalculate=False):
+    """Run calculations on a set of activities.
+
+    Calculates metrics on a set of FIT, TCX and/or GPX activities. Since
+    processing a large number of activities can be slow, results are cached to a
+    local file. If cached results are available, processing will be skipped and
+    results from the cache will be returned instead.
+
+    Args:
+        files: List of FIT, TCX and/or GPX files to process
+        path: Path to directory containing the files
+        recalculate: Pass True to recalculate all results, pass string or
+          iterable to recalculate only certain data files
+
+    Returns:
+        A Pandas dataframe of calculation results
+    """
 
     # Load cached calculation results if available
     try:

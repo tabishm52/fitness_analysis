@@ -1,3 +1,5 @@
+"""Class for parsing FIT, TCX and GPX files into Pandas DataFrames."""
+
 import os
 
 from .parse_fit import parse_fit
@@ -5,14 +7,14 @@ from .parse_tcx_gpx import parse_tcx, parse_gpx
 
 
 def select_and_rename_cols(df, selector, mapper):
-    """Selects and renames columns from a DataFrame"""
+    """Selects and renames columns from a DataFrame."""
+
     cols = [col for col in selector if col in df.columns]
-    df = df.loc[:,cols].rename(columns=mapper)
-    return df
+    return df.loc[:,cols].rename(columns=mapper)
 
 
 class ActivityParser():
-    """Parser for FIT, GPX and TCX files
+    """Parser for FIT, GPX and TCX files.
 
     Each instance of this class is a parser object that can be used to import
     FIT, GPX and TCX files into DataFrames. During parsing, the column names in
@@ -22,7 +24,7 @@ class ActivityParser():
     """
 
     def __init__(self):
-        """Initializes 'selector' and 'mapper' objects"""
+        """Initializes 'selector' and 'mapper' attributes to defaults."""
 
         # 'Selectors' specify the list and order of columns to be copied from
         # each DataFrame (records and laps for each file type), and 'mappers'
@@ -176,28 +178,28 @@ class ActivityParser():
         }
 
     def parse(self, file, ext=None):
-    """Loads a FIT, TCX or GPX activity into Pandas DataFrames
-    
-    During import, column names in the 'records' and 'laps' DataFrames are
-    normalized into a canonical set of names. Note this function does not
-    guarantee that all canonical columns appear in the output, it only renames
-    the columns that are present in the activity file.
+        """Loads a FIT, TCX or GPX activity into Pandas DataFrames.
 
-    Arguments:
-        file: File-like or path-like object. A path-like argument ending in .gz
-          will be unzipped before processing.
-        ext: String of value 'FIT', 'TCX' or 'GPX' that specifies the file type.
-          Must be provided if 'file' is a file-like object. Optional if 'file'
-          is a path-like object (the file type will be inferred from the file
-          name).
+        During import, column names in the 'records' and 'laps' DataFrames are
+        normalized into a canonical set of names. Note this function does not
+        guarantee that all canonical columns appear in the output, it only
+        renames the columns that are present in the activity file.
 
-    Returns:
-        A tuple of (records, laps, extra)
+        Arguments:
+            file: File-like or path-like object. A path-like argument ending in
+              '.gz' will be unzipped before processing.
+            ext: String of value 'FIT', 'TCX' or 'GPX' that specifies the file
+              type. Must be provided if 'file' is a file-like object. Optional
+              if 'file' is a path-like object (the file type will be inferred
+              from the file name).
 
-        records: Time-indexed DataFrame of sensor data recorded during activity
-        laps: DataFrame of lap information from the activity
-        extra: Dict of selected additional information from the activity
-    """
+        Returns:
+            A tuple of (records, laps, extra)
+
+            records: Time-indexed DataFrame of sensor data from the activity
+            laps: DataFrame of lap information from the activity
+            extra: Dict of selected additional information from the activity
+        """
 
         if ext is None:
             root, ext = os.path.splitext(file)
