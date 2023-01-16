@@ -2,8 +2,9 @@
 
 import os
 
-from .parse_fit import parse_fit
-from .parse_tcx_gpx import parse_tcx, parse_gpx
+from .parse_fit_file import parse_fit
+from .parse_tcx_gpx import parse_tcx
+from .parse_tcx_gpx import parse_gpx
 
 
 def select_and_rename_cols(df, selector, mapper):
