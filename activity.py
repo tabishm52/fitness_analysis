@@ -25,6 +25,16 @@ def get_cache_path():
 def process_one_activity(fname, path, cache=None):
     """Run calculations on a single Strava activity."""
 
+    # Manual activities in Strava don't have a related activity file
+    if pd.isna(fname):
+        return {
+            'Filename': fname,
+            'Hash': np.NaN,
+            'Timezone': np.NaN,
+            'Has Location': False,
+            'Observed FTP': np.NaN,
+        }
+
     # Calculate hash of file - to make sure cached results are valid
     full_path = os.path.join(path, fname)
     with open(full_path, 'rb') as f:
@@ -33,7 +43,13 @@ def process_one_activity(fname, path, cache=None):
     # Short-circuit and return cached results if available
     try:
         if cache is not None and cache.loc[fname, 'Hash'] == h:
-            return cache.loc[fname].to_numpy()
+            return {
+                'Filename': fname,
+                'Hash': cache.loc[fname, 'Hash'],
+                'Timezone': cache.loc[fname, 'Timezone'],
+                'Has Location': cache.loc[fname, 'Has Location'],
+                'Observed FTP': cache.loc[fname, 'Observed FTP'],
+            }
     except KeyError:
         pass
 
@@ -46,9 +62,11 @@ def process_one_activity(fname, path, cache=None):
         idx = points.apply(pd.Series.first_valid_index).max()
         lat, lng = points.loc[idx]
         tz = tz_finder.timezone_at(lng=lng, lat=lat)
+        has_loc = True
     except KeyError:
         # No valid lat,lng data in file
         tz = np.NaN
+        has_loc = False
 
     # Estimate FTP by calculating maximum 20-minute effort in file
     try:
@@ -65,7 +83,13 @@ def process_one_activity(fname, path, cache=None):
         # No power data in file
         ftp = np.NaN
 
-    return h, tz, ftp
+    return {
+        'Filename': fname,
+        'Hash': h,
+        'Timezone': tz,
+        'Has Location': has_loc,
+        'Observed FTP': ftp,
+    }
 
 
 def process_activities(files, path, recalculate=False):
@@ -99,16 +123,14 @@ def process_activities(files, path, recalculate=False):
         cache = None
 
     # Run calculations on all FIT files, leveraging cached results
-    calcs = pd.DataFrame()
-    calcs['Filename'] = files
     processor = functools.partial(process_one_activity, path=path, cache=cache)
     with multiprocessing.Pool() as p:
-        results = p.map(processor, calcs['Filename'])
-    calcs['Hash'], calcs['Timezone'], calcs['Observed FTP'] = zip(*results)
+        calcs = pd.DataFrame(p.map(processor, files), index=files.index)
 
     # Add new results to cache, deduplicate and save
     new_cache = pd.concat([calcs.set_index('Filename'), cache])
-    new_cache = new_cache[~new_cache.index.duplicated()].sort_index()
-    new_cache.to_csv(get_cache_path())
+    new_cache = new_cache[~new_cache.index.isna()]
+    new_cache = new_cache[~new_cache.index.duplicated()]
+    new_cache.sort_index().to_csv(get_cache_path())
 
     return calcs

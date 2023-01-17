@@ -118,17 +118,14 @@ def load_strava_activities(path, recalculate=False):
     csv.reset_index(drop=True, inplace=True)
 
     # Run a set of calculations on all FIT files
-    calcs = activity.process_activities(csv['Filename'].dropna(),
-                                        path,
-                                        recalculate)
+    calcs = activity.process_activities(csv['Filename'], path, recalculate)
 
     # This is kinda ugly - convert all dates to local time (or a default) and
     # then drop the tzinfo so that weekly/daily calcs match Strava
     def activity_local_times():
         for i, _ in csv.iterrows():
             if (
-                i not in calcs.index
-                or pd.isna(calcs.loc[i, 'Timezone'])
+                pd.isna(calcs.loc[i, 'Timezone'])
                 or csv.loc[i, 'Activity Type'] == 'Virtual Ride'
             ):
                 yield (
@@ -151,7 +148,7 @@ def load_strava_activities(path, recalculate=False):
     df['Description'] = csv['Activity Name']
     df['Bicycle'] = csv['Activity Gear']
     df['Trainer'] = ((csv['Activity Type'] == 'Virtual Ride') |
-                     (csv['Elevation Gain'] == 0))
+                     (~calcs['Has Location']))
     df['Distance'] = csv['Distance'] * 0.6213712 # Convert km to mi
     df['Elevation'] = csv['Elevation Gain'] / 0.3048 # Convert m to ft
     df['Elapsed Time'] = csv['Elapsed Time'] # In seconds
