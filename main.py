@@ -154,6 +154,7 @@ def load_strava_activities(path, recalculate=False):
     df['Elapsed Time'] = csv['Elapsed Time'] # In seconds
     df['Moving Time'] = csv['Moving Time'] # In seconds
     df['Observed FTP'] = calcs['Observed FTP'] # In watts
+    df['Filename'] = csv['Filename']
     df.set_index('Date', inplace=True)
 
     return df.sort_index()
