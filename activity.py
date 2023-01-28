@@ -38,14 +38,14 @@ def process_one_activity(fname, path, cache=None):
     # Calculate hash of file - to make sure cached results are valid
     full_path = os.path.join(path, fname)
     with open(full_path, 'rb') as f:
-        h = hashlib.blake2b(f.read(), digest_size=8).hexdigest()
+        hash_val = hashlib.blake2b(f.read(), digest_size=8).hexdigest()
 
     # Short-circuit and return cached results if available
     try:
-        if cache is not None and cache.loc[fname, 'Hash'] == h:
+        if cache is not None and cache.loc[fname, 'Hash'] == hash_val:
             return {
                 'Filename': fname,
-                'Hash': cache.loc[fname, 'Hash'],
+                'Hash': hash_val,
                 'Timezone': cache.loc[fname, 'Timezone'],
                 'Has Location': cache.loc[fname, 'Has Location'],
                 'Observed FTP': cache.loc[fname, 'Observed FTP'],
@@ -61,16 +61,16 @@ def process_one_activity(fname, path, cache=None):
         points = records[['latitude', 'longitude']]
         idx = points.apply(pd.Series.first_valid_index).max()
         lat, lng = points.loc[idx]
-        tz = tz_finder.timezone_at(lng=lng, lat=lat)
-        has_loc = True
+        timezone = tz_finder.timezone_at(lng=lng, lat=lat)
+        has_location = True
     except KeyError:
         # No valid lat,lng data in file
-        tz = np.NaN
-        has_loc = False
+        timezone = np.NaN
+        has_location = False
 
     # Estimate FTP by calculating maximum 20-minute effort in file
     try:
-        ftp = (
+        observed_ftp = (
             np.max(
                 records['power']
                 .resample('S')
@@ -81,14 +81,14 @@ def process_one_activity(fname, path, cache=None):
         )
     except KeyError:
         # No power data in file
-        ftp = np.NaN
+        observed_ftp = np.NaN
 
     return {
         'Filename': fname,
-        'Hash': h,
-        'Timezone': tz,
-        'Has Location': has_loc,
-        'Observed FTP': ftp,
+        'Hash': hash_val,
+        'Timezone': timezone,
+        'Has Location': has_location,
+        'Observed FTP': observed_ftp,
     }
 
 
@@ -101,13 +101,13 @@ def process_activities(files, path, recalculate=False):
     results from the cache will be returned instead.
 
     Args:
-        files: List of FIT, TCX and/or GPX files to process
-        path: Path to directory containing the files
+        files: List of FIT, TCX and/or GPX files to process.
+        path: Path to directory containing the files.
         recalculate: Pass True to recalculate all results, pass string or
-          iterable to recalculate only certain data files
+          iterable of file name(s) to recalculate only certain data files.
 
     Returns:
-        A Pandas dataframe of calculation results
+        A Pandas DataFrame of calculation results
     """
 
     # Load cached calculation results if available

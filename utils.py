@@ -18,10 +18,10 @@ def merge_excel_files(path):
     file will be concatenated in alphabetical order of the Excel file names.
 
     Args:
-        path: Path to directory of Excel files
+        path: Path to directory of Excel files.
 
     Returns:
-        A dictionary of DataFrames
+        A dict of DataFrames.
     """
 
     data = {}
@@ -47,15 +47,17 @@ def time_series_linear_regression(series, num_segments, units):
     """Perform a piecewise linear regression on a time series.
 
     Args:
-        series: Pandas time series on which to perform regression
-        num_segments: Number of segments for piecewise regression
+        series: Pandas time series on which to perform regression.
+        num_segments: Number of segments for piecewise regression.
         units: Time unit to use for calculating slope at each breakpoint
-          (e.g., 'D' means calculate rate per day)
+          (e.g., 'D' means calculate rate per day).
 
     Returns:
+        A tuple of (df, r2).
+
         df: Dataframe (time-indexed) of breakpoints, with value and slope
-          calculated for each breakpoint
-        r2: Calculated R^2 score of model fit
+          calculated for each breakpoint.
+        r2: Calculated R^2 score of model fit.
     """
 
     # Convert time index to a uint array (in us) for scipy calculations
@@ -84,12 +86,12 @@ def time_series_constant_regression(series, num_segments):
     """Fit a segmented constant model to a time series.
 
     Args:
-        series: Pandas time series on which to perform regression
-        num_segments: Number of segments for model
+        series: Pandas time series on which to perform regression.
+        num_segments: Number of segments for model.
 
     Returns:
         Pandas series (time-indexed) of breakpoints, with constant
-        value fitted at each breakpoint
+        value fitted at each breakpoint.
     """
 
     # Convert time index to a uint array (in us) for scipy calculations
@@ -106,13 +108,13 @@ def eer_male(weight, height, dob, pa=1.0):
     """Male estimated energy requirements (per day) from MyNetDiary.
 
     Args:
-        weight: Pandas time series of weight measurements in pounds
-        height: Height, in inches
-        dob: Date of birth, as string or datetime64
-        pa: Activity level, 1.0 = sedentary, up to 1.45 for very active
+        weight: Pandas time series of weight measurements in pounds.
+        height: Height, in inches.
+        dob: Date of birth, as string or datetime64.
+        pa: Activity level, 1.0 = sedentary, up to 1.45 for very active.
 
     Returns:
-        Time series of calculated EER on dates of weight measurements
+        Time series of calculated EER on dates of weight measurements.
     """
 
     # Calculate time series of age in fractional years
@@ -127,13 +129,13 @@ def eer_female(weight, height, dob, pa=1.0):
     """Female estimated energy requirements (per day) from MyNetDiary.
 
     Args:
-        weight: Pandas time series of weight measurements in pounds
-        height: Height, in inches
-        dob: Date of birth, as string or datetime64
-        pa: Activity level, 1.0 = sedentary, up to 1.45 for very active
+        weight: Pandas time series of weight measurements in pounds.
+        height: Height, in inches.
+        dob: Date of birth, as string or datetime64.
+        pa: Activity level, 1.0 = sedentary, up to 1.45 for very active.
 
     Returns:
-        Time series of calculated EER on dates of weight measurements
+        Time series of calculated EER on dates of weight measurements.
     """
 
     # Calculate time series of age in fractional years
