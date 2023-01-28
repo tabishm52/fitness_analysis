@@ -150,7 +150,7 @@ def load_strava_activities(path, recalculate=False):
     df['Description'] = csv['Activity Name']
     df['Bicycle'] = csv['Activity Gear']
     df['Trainer'] = ((csv['Activity Type'] == 'Virtual Ride') |
-                     (~calcs['Has Location']))
+                     (~calcs['Has Location'] & ~csv['Filename'].isna()))
     df['Distance'] = csv['Distance'] * 0.6213712 # Convert km to mi
     df['Elevation'] = csv['Elevation Gain'] / 0.3048 # Convert m to ft
     df['Elapsed Time'] = csv['Elapsed Time'] # In seconds
