@@ -82,6 +82,12 @@ def time_series_linear_regression(series, num_segments, units):
     return df, r2
 
 
+def calculate_weekly_rate(data):
+    """Calculates average velocity of a time series on a per week basis."""
+
+    return time_series_linear_regression(data, 1, 'W')[0].iloc[0]['Rate']
+
+
 def time_series_constant_regression(series, num_segments):
     """Fit a segmented constant model to a time series.
 
@@ -103,44 +109,3 @@ def time_series_constant_regression(series, num_segments):
     return pd.Series(shift(piecewise.predict(breakpoints), -1, cval=np.NaN),
                      index=breakpoints.astype('datetime64[us]'))
 
-
-def eer_male(weight, height, dob, pa=1.0):
-    """Male estimated energy requirements (per day) from MyNetDiary.
-
-    Args:
-        weight: Pandas time series of weight measurements in pounds.
-        height: Height, in inches.
-        dob: Date of birth, as string or datetime64.
-        pa: Activity level, 1.0 = sedentary, up to 1.45 for very active.
-
-    Returns:
-        Time series of calculated EER on dates of weight measurements.
-    """
-
-    # Calculate time series of age in fractional years
-    age = (weight.index - np.datetime64(dob)).astype('timedelta64[D]') / 365.25
-
-    # Perform male EER calculation per MyNetDiary
-    # https://www.mynetdiary.com/supportArticle.do?articleId=328
-    return 662 - 9.53 * age + pa * (7.23 * weight + 13.71 * height)
-
-
-def eer_female(weight, height, dob, pa=1.0):
-    """Female estimated energy requirements (per day) from MyNetDiary.
-
-    Args:
-        weight: Pandas time series of weight measurements in pounds.
-        height: Height, in inches.
-        dob: Date of birth, as string or datetime64.
-        pa: Activity level, 1.0 = sedentary, up to 1.45 for very active.
-
-    Returns:
-        Time series of calculated EER on dates of weight measurements.
-    """
-
-    # Calculate time series of age in fractional years
-    age = (weight.index - np.datetime64(dob)).astype('timedelta64[D]') / 365.25
-
-    # Perform female EER calculation per MyNetDiary
-    # https://www.mynetdiary.com/supportArticle.do?articleId=328
-    return 354 - 6.91 * age + pa * (4.25 * weight + 18.44 * height)

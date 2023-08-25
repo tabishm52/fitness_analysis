@@ -19,8 +19,9 @@ Usage:
 
 from .utils import time_series_linear_regression
 from .utils import time_series_constant_regression
-from .utils import eer_male
-from .utils import eer_female
 
-from .main import load_mnd_data
-from .main import load_strava_activities
+from .mynetdiary import eer_male
+from .mynetdiary import eer_female
+from .mynetdiary import load_mnd_data
+
+from .strava import load_strava_activities
