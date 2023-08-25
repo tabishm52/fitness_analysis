@@ -8,6 +8,14 @@ from scipy.ndimage.interpolation import shift
 import sklearn.metrics
 
 import pwlf
+import timezonefinder
+
+import activity_parser
+
+
+# Global objects that can be used throughout the fitness_analysis module
+parser = activity_parser.ActivityParser()
+tz_finder = timezonefinder.TimezoneFinder()
 
 
 def merge_excel_files(path):
@@ -109,3 +117,21 @@ def time_series_constant_regression(series, num_segments):
     return pd.Series(shift(piecewise.predict(breakpoints), -1, cval=np.NaN),
                      index=breakpoints.astype('datetime64[us]'))
 
+
+def infer_timezone(records):
+    """Determine the timezone of an activity from its GPS location data
+
+    Finds the first valid latitude and longitude in the data and calculates the
+    timezone for that GPS location.
+
+    Args:
+        records: The activity data to process
+
+    Returns:
+        Timezone string, or None if no timezone has been matched
+    """
+
+    points = records[['latitude', 'longitude']]
+    idx = points.apply(pd.Series.first_valid_index).max()
+    lat, lng = points.loc[idx]
+    return tz_finder.timezone_at(lng=lng, lat=lat)

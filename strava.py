@@ -7,13 +7,8 @@ import os
 
 import numpy as np
 import pandas as pd
-import timezonefinder
 
-import activity_parser
-
-
-parser = activity_parser.ActivityParser()
-tz_finder = timezonefinder.TimezoneFinder()
+from . import utils
 
 
 def get_cache_path():
@@ -54,14 +49,11 @@ def process_one_activity(fname, path, cache=None):
         pass
 
     # Load time-series data from the file
-    records, _, _ = parser.parse(full_path)
+    records, _, _ = utils.parser.parse(full_path)
 
     # Determine timezone using first valid lat,lng position in the file
     try:
-        points = records[['latitude', 'longitude']]
-        idx = points.apply(pd.Series.first_valid_index).max()
-        lat, lng = points.loc[idx]
-        timezone = tz_finder.timezone_at(lng=lng, lat=lat)
+        timezone = utils.infer_timezone(records)
         has_location = True
     except KeyError:
         # No valid lat,lng data in file
