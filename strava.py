@@ -17,33 +17,33 @@ def get_cache_path():
     return os.path.join(os.path.dirname(__file__), 'cache.csv')
 
 
-def process_one_activity(fname, path, cache=None):
-    """Run calculations on a single Strava activity."""
+def process_one_activity(filename, path, cache=None):
+    """Run calculations on a single activity."""
 
     # Manual activities in Strava don't have a related activity file
-    if pd.isna(fname):
+    if pd.isna(filename):
         return {
-            'Filename': fname,
-            'Hash': np.NaN,
-            'Timezone': np.NaN,
+            'Filename': filename,
+            'Hash': np.nan,
+            'Timezone': np.nan,
             'Has Location': False,
-            'Observed FTP': np.NaN,
+            'Observed FTP': np.nan,
         }
 
     # Calculate hash of file - to make sure cached results are valid
-    full_path = os.path.join(path, fname)
+    full_path = os.path.join(path, filename)
     with open(full_path, 'rb') as f:
         hash_val = hashlib.blake2b(f.read(), digest_size=8).hexdigest()
 
     # Short-circuit and return cached results if available
     try:
-        if cache is not None and cache.loc[fname, 'Hash'] == hash_val:
+        if cache is not None and cache.at[filename, 'Hash'] == hash_val:
             return {
-                'Filename': fname,
+                'Filename': filename,
                 'Hash': hash_val,
-                'Timezone': cache.loc[fname, 'Timezone'],
-                'Has Location': cache.loc[fname, 'Has Location'],
-                'Observed FTP': cache.loc[fname, 'Observed FTP'],
+                'Timezone': cache.at[filename, 'Timezone'],
+                'Has Location': cache.at[filename, 'Has Location'],
+                'Observed FTP': cache.at[filename, 'Observed FTP'],
             }
     except KeyError:
         pass
@@ -57,7 +57,7 @@ def process_one_activity(fname, path, cache=None):
         has_location = True
     except KeyError:
         # No valid lat,lng data in file
-        timezone = np.NaN
+        timezone = np.nan
         has_location = False
 
     # Estimate FTP by calculating maximum 20-minute effort in file
@@ -73,10 +73,10 @@ def process_one_activity(fname, path, cache=None):
         )
     except KeyError:
         # No power data in file
-        observed_ftp = np.NaN
+        observed_ftp = np.nan
 
     return {
-        'Filename': fname,
+        'Filename': filename,
         'Hash': hash_val,
         'Timezone': timezone,
         'Has Location': has_location,
@@ -87,19 +87,19 @@ def process_one_activity(fname, path, cache=None):
 def process_activities(files, path, recalculate=False):
     """Run calculations on a set of activities.
 
-    Calculates metrics on a set of FIT, TCX and/or GPX activities. Since
-    processing a large number of activities can be slow, results are cached to a
-    local file. If cached results are available, processing will be skipped and
-    results from the cache will be returned instead.
+    Calculates metrics on a set of activity files. Loading of activities in FIT
+    format can be slow, so results are cached to a local file. If cached results
+    are available, processing will be skipped and results from the cache will be
+    returned instead.
 
     Args:
-        files: List of FIT, TCX and/or GPX files to process.
+        files: List of activity files to process.
         path: Path to directory containing the files.
-        recalculate: Pass True to recalculate all results, pass string or
-          iterable of file name(s) to recalculate only certain data files.
+        recalculate: Pass True to recalculate all results, pass file name or
+          iterable of file names to recalculate only certain data files.
 
     Returns:
-        A Pandas DataFrame of calculation results
+        DataFrame of calculation results
     """
 
     # Load cached calculation results if available
@@ -114,7 +114,7 @@ def process_activities(files, path, recalculate=False):
     except FileNotFoundError:
         cache = None
 
-    # Run calculations on all FIT files, leveraging cached results
+    # Run calculations on all activity files, leveraging cached results
     processor = functools.partial(process_one_activity, path=path, cache=cache)
     with multiprocessing.Pool() as p:
         calcs = pd.DataFrame(p.map(processor, files), index=files.index)
@@ -139,11 +139,11 @@ def load_strava_activities(path, recalculate=False):
 
     Args:
         path: Path to Strava export directory.
-        recalculate: Pass True to recalculate all results, pass string or
-          iterable of file name(s) to recalculate only certain data files.
+        recalculate: Pass True to recalculate all results, pass file name or
+          iterable of file names to recalculate only certain data files.
 
     Returns:
-        A Pandas DataFrame of Strava bicycling activity data.
+        DataFrame of Strava bicycling activity data.
     """
 
     # Load activities.csv and filter out any non-bicycle activities
@@ -189,6 +189,5 @@ def load_strava_activities(path, recalculate=False):
     df['Moving Time'] = csv['Moving Time'] # In seconds
     df['Observed FTP'] = calcs['Observed FTP'] # In watts
     df['Filename'] = csv['Filename']
-    df.set_index('Date', inplace=True)
 
-    return df.sort_index()
+    return df.set_index('Date').sort_index()
