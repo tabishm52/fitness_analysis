@@ -14,7 +14,7 @@ Usage:
 >>> import fitness_analyis as fa
 
 >>> weight, calories = fa.load_mnd_data('path/to/MyNetDiary/files/', ...)
->>> activities = fa.load_strava_activities('path/to/Strava/archive/')
+>>> activities = fa.load_strava_activities('path/to/Strava/archive/', ...)
 """
 
 from .utils import time_series_linear_regression

@@ -128,7 +128,7 @@ def process_activities(files, path, recalculate=False):
     return calcs
 
 
-def load_strava_activities(path, recalculate=False):
+def load_strava_activities(path, home_tz, recalculate=False):
     """Loads bicycling activity data from a Strava data export.
 
     In addition to loading Strava's activities.csv, calculates certain
@@ -139,6 +139,8 @@ def load_strava_activities(path, recalculate=False):
 
     Args:
         path: Path to Strava export directory.
+        home_tz: Timezone to use as a default for activities on a trainer or
+          for activities where location data is not available.
         recalculate: Pass True to recalculate all results, pass file name or
           iterable of file names to recalculate only certain data files.
 
@@ -168,7 +170,7 @@ def load_strava_activities(path, recalculate=False):
     # Calculate the local date and time for each activity, subbing in a default
     # timezone for trainer rides or if timezone info is not available
     mask = calcs['Trainer'] | calcs['Timezone'].isna()
-    calcs['Timezone Used'] = calcs['Timezone'].mask(mask, 'America/Los_Angeles')
+    calcs['Timezone Used'] = calcs['Timezone'].mask(mask, home_tz)
     calcs['Local Date'] = [
         date.tz_localize('UTC').tz_convert(tz).tz_localize(None)
         for date, tz in zip(calcs.index, calcs['Timezone Used'])
