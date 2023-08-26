@@ -89,7 +89,7 @@ def load_mnd_data(path, eer_func, window):
         .resample('D')
         .interpolate()
         .rolling(window, center=True)
-        .apply(utils.calculate_weekly_rate)
+        .apply(lambda x: utils.time_series_linear_rate(x, 'W'))
     )
 
     # Construct a table of calorie information

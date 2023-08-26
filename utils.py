@@ -5,6 +5,7 @@ import os
 import numpy as np
 import pandas as pd
 from scipy.ndimage.interpolation import shift
+import sklearn.linear_model
 import sklearn.metrics
 
 import pwlf
@@ -90,10 +91,29 @@ def time_series_linear_regression(series, num_segments, units):
     return df, r2
 
 
-def calculate_weekly_rate(data):
-    """Calculates average velocity of a time series on a per week basis."""
+def time_series_linear_rate(series, units):
+    """Calculate the slope of the linear regression of a time series.
 
-    return time_series_linear_regression(data, 1, 'W')[0].iloc[0]['Rate']
+    Args:
+        series: Pandas time series on which to perform regression.
+        units: Time unit to use for calculating slope (e.g., 'D' means calculate
+          rate per day).
+
+    Returns:
+        Calculated slope as a rate per 'units'
+    """
+
+    # Convert time index to a uint array (in us) for scipy calculations
+    x = series.index.to_numpy().astype('datetime64[us]').astype(np.uint64)
+
+    # Do an ordinary linear regression
+    model = sklearn.linear_model.LinearRegression()
+    model.fit(x.reshape(-1, 1), series.values)
+
+    # Get the conversion factor to desired rate units
+    c = np.uint64(np.timedelta64(np.timedelta64(1, units), 'us'))
+
+    return model.coef_[0] * c
 
 
 def time_series_constant_regression(series, num_segments):
