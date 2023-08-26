@@ -147,42 +147,39 @@ def load_strava_activities(path, recalculate=False):
     """
 
     # Load activities.csv and filter out any non-bicycle activities
-    csv = pd.read_csv(os.path.join(path, 'activities.csv'))
-    csv.query('`Activity Type` in ["Ride", "Virtual Ride"]', inplace=True)
-    csv.reset_index(drop=True, inplace=True)
+    csv = (
+        pd.read_csv(os.path.join(path, 'activities.csv'))
+        .query('`Activity Type` in ["Ride", "Virtual Ride"]')
+    )
 
-    # Run a set of calculations on all FIT files
+    # Set the UTC date and time of the activity as the index
+    csv['Activity Date'] = pd.to_datetime(csv['Activity Date'])
+    csv.set_index('Activity Date', inplace=True)
+
+    # Run a set of calculations on all activity files
     calcs = process_activities(csv['Filename'], path, recalculate)
 
-    # This is kinda ugly - convert all dates to local time (or a default) and
-    # then drop the tzinfo so that weekly/daily calcs match Strava
-    def activity_local_times():
-        for i, _ in csv.iterrows():
-            if (
-                pd.isna(calcs.loc[i, 'Timezone'])
-                or csv.loc[i, 'Activity Type'] == 'Virtual Ride'
-            ):
-                yield (
-                    pd.to_datetime(csv.loc[i, 'Activity Date'])
-                    .tz_localize('UTC')
-                    .tz_convert('America/Los_Angeles')
-                    .replace(tzinfo=None)
-                )
-            else:
-                yield (
-                    pd.to_datetime(csv.loc[i, 'Activity Date'])
-                    .tz_localize('UTC')
-                    .tz_convert(calcs.loc[i, 'Timezone'])
-                    .replace(tzinfo=None)
-                )
+    # Infer activities that were performed on a stationary trainer
+    calcs['Trainer'] = (
+        (csv['Activity Type'] == 'Virtual Ride')
+        | (~calcs['Has Location'] & ~csv['Filename'].isna())
+    )
+
+    # Calculate the local date and time for each activity, subbing in a default
+    # timezone for trainer rides or if timezone info is not available
+    mask = calcs['Trainer'] | calcs['Timezone'].isna()
+    calcs['Timezone Used'] = calcs['Timezone'].mask(mask, 'America/Los_Angeles')
+    calcs['Local Date'] = [
+        date.tz_localize('UTC').tz_convert(tz).tz_localize(None)
+        for date, tz in zip(calcs.index, calcs['Timezone Used'])
+    ]
 
     # Construct the return DataFrame, converting units as appropriate
     df = pd.DataFrame()
-    df['Date'] = pd.Series(activity_local_times(), csv.index)
+    df['Date'] = calcs['Local Date']
     df['Description'] = csv['Activity Name']
     df['Bicycle'] = csv['Activity Gear']
-    df['Trainer'] = ((csv['Activity Type'] == 'Virtual Ride') |
-                     (~calcs['Has Location'] & ~csv['Filename'].isna()))
+    df['Trainer'] = calcs['Trainer']
     df['Distance'] = csv['Distance'] * 0.6213712 # Convert km to mi
     df['Elevation'] = csv['Elevation Gain'] / 0.3048 # Convert m to ft
     df['Elapsed Time'] = csv['Elapsed Time'] # In seconds
