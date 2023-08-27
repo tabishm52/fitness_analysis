@@ -10,13 +10,13 @@ def eer_male(weight, height, dob, pa=1.0):
     """Male estimated energy requirements (per day) from MyNetDiary.
 
     Args:
-        weight: Pandas time series of weight measurements in pounds.
+        weight: Time-indexed Series of weight measurements in pounds.
         height: Height, in inches.
         dob: Date of birth, as string or datetime64.
         pa: Activity level, 1.0 = sedentary, up to 1.45 for very active.
 
     Returns:
-        Time series of calculated EER on dates of weight measurements.
+        Time-indexed Series of calculated EER on dates of weight measurements.
     """
 
     # Calculate time series of age in fractional years
@@ -31,13 +31,13 @@ def eer_female(weight, height, dob, pa=1.0):
     """Female estimated energy requirements (per day) from MyNetDiary.
 
     Args:
-        weight: Pandas time series of weight measurements in pounds.
+        weight: Time-indexed Series of weight measurements in pounds.
         height: Height, in inches.
         dob: Date of birth, as string or datetime64.
         pa: Activity level, 1.0 = sedentary, up to 1.45 for very active.
 
     Returns:
-        Time series of calculated EER on dates of weight measurements.
+        Time-indexed Series of calculated EER on dates of weight measurements.
     """
 
     # Calculate time series of age in fractional years
@@ -58,10 +58,10 @@ def load_mnd_data(path, eer_func, window):
         window: Rolling window (in days) for averaging calculations.
 
     Returns:
-        A tuple of (weight, calories)
+        Tuple of (weight, calories)
 
-        weight: A Pandas DataFrame of processed weight data.
-        calories: A Pandas DataFrame of processed calorie data.
+        weight: DataFrame of processed weight data.
+        calories: DataFrame of processed calorie data.
     """
 
     # Load MyNetDiary data
@@ -72,44 +72,48 @@ def load_mnd_data(path, eer_func, window):
     weight['Actual'] = (
         mnd_data['Measurements']
         .query('Measurement == "Body Weight"')
-        .set_index('Date')['Value']
-    )
-    smoothed_weight = (
-        weight['Actual']
+        .set_index('Date')
+        ['Value']
         .resample('D')
-        .interpolate()
-        .rolling(5, center=True)
         .mean()
     )
-    weight['Smoothed'] = smoothed_weight
+    weight['Smoothed'] = (
+        weight['Actual']
+        .rolling(7, min_periods=2, center=True)
+        .mean()
+    )
 
     # Calculate weight gain/loss rate over time
     weight['Rate'] = (
         weight['Actual']
-        .resample('D')
-        .interpolate()
-        .rolling(window, center=True)
-        .apply(lambda x: utils.time_series_linear_rate(x, 'W'))
+        .rolling(window, min_periods=window//2, center=True)
+        .apply(lambda x: utils.time_series_linear_rate(x.dropna(), 'W'))
     )
 
     # Construct a table of calorie information
     calories = pd.DataFrame()
     calories['Food'] = (
         mnd_data['Food']
-        .resample('D', on='Date & Time')['Calories, cals']
+        .resample('D', on='Date & Time')
+        ['Calories, cals']
         .sum()
     )
     calories['Exercise'] = (
         mnd_data['Exercise']
-        .resample('D', on='Date & Time')['Calories']
+        .resample('D', on='Date & Time')
+        ['Calories']
         .sum()
     )
-    calories['Baseline'] = eer_func(smoothed_weight)
+    calories['Baseline'] = (
+        eer_func(
+            weight['Smoothed'].reindex(calories.index, method='nearest')
+        )
+    )
     calories.index.rename('Date', inplace=True)
     calories.fillna(0, inplace=True)
 
     # Create an 'adjusted food' column that fills in a rolling average for
-    # missing days, then calculate net calorie excess / deficit
+    # days where no food was logged
     food_masked = (
         calories['Food']
         .mask(calories['Food'] == 0)
@@ -121,6 +125,8 @@ def load_mnd_data(path, eer_func, window):
             .mean()
         )
     )
+
+    # Calculate net calorie balance for each day
     calories['Net Daily'] = (
         calories['Food Adj']
         - calories['Baseline']
