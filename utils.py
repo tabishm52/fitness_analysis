@@ -4,7 +4,6 @@ import os
 
 import numpy as np
 import pandas as pd
-from scipy.ndimage.interpolation import shift
 import sklearn.linear_model
 import sklearn.metrics
 
@@ -52,19 +51,19 @@ def merge_excel_files(path):
     return data
 
 
-def time_series_linear_regression(series, num_segments, units):
+def time_series_piecewise_regression(series, num_segments, units):
     """Perform a piecewise linear regression on a time series.
 
     Args:
-        series: Pandas time series on which to perform regression.
+        series: Time-indexed Series on which to perform regression.
         num_segments: Number of segments for piecewise regression.
         units: Time unit to use for calculating slope at each breakpoint
           (e.g., 'D' means calculate rate per day).
 
     Returns:
-        A tuple of (df, r2).
+        Tuple of (result, r2).
 
-        df: Dataframe (time-indexed) of breakpoints, with value and slope
+        result: Time-indexed DataFrame of breakpoints, with value and slope
           calculated for each breakpoint.
         r2: Calculated R^2 score of model fit.
     """
@@ -73,29 +72,27 @@ def time_series_linear_regression(series, num_segments, units):
     x = series.index.to_numpy().astype('datetime64[us]').astype(np.uint64)
 
     # Do a multi-segment piecewise linear regression
-    piecewise = pwlf.PiecewiseLinFit(x, series.values)
-    breakpoints = piecewise.fit(num_segments)
-    values = piecewise.predict(breakpoints)
-    slopes = np.append(piecewise.calc_slopes(), [np.NaN])
-    regression = piecewise.predict(x)
+    model = pwlf.PiecewiseLinFit(x, series.values)
+    breakpoints = model.fit(num_segments)
+    regression = model.predict(x)
 
     # Get the conversion factor to desired rate units
     c = np.uint64(np.timedelta64(np.timedelta64(1, units), 'us'))
 
-    # Construct a table of overall regression results
-    df = pd.DataFrame(index=breakpoints.astype('datetime64[us]'))
-    df['Value'] = values
-    df['Rate'] = slopes * c
+    # Construct the DataFrame of regression results
+    result = pd.DataFrame(index=breakpoints.astype('datetime64[us]'))
+    result['Value'] = model.predict(breakpoints)
+    result['Rate'] = c * np.append(model.calc_slopes(), [np.NaN])
     r2 = sklearn.metrics.r2_score(series.values, regression)
 
-    return df, r2
+    return result, r2
 
 
 def time_series_linear_rate(series, units):
     """Calculate the slope of the linear regression of a time series.
 
     Args:
-        series: Pandas time series on which to perform regression.
+        series: Time-indexed Series on which to perform regression.
         units: Time unit to use for calculating slope (e.g., 'D' means calculate
           rate per day).
 
@@ -113,29 +110,41 @@ def time_series_linear_rate(series, units):
     # Get the conversion factor to desired rate units
     c = np.uint64(np.timedelta64(np.timedelta64(1, units), 'us'))
 
-    return model.coef_[0] * c
+    return c * model.coef_[0]
 
 
 def time_series_constant_regression(series, num_segments):
     """Fit a segmented constant model to a time series.
 
     Args:
-        series: Pandas time series on which to perform regression.
+        series: Time-indexed Series on which to perform regression.
         num_segments: Number of segments for model.
 
     Returns:
-        Pandas series (time-indexed) of breakpoints, with constant
-        value fitted at each breakpoint.
+        Tuple of (result, r2).
+
+        result: Time-indexed Series of breakpoints, with constant value fitted
+          at each breakpoint. Use result.resample().ffill() to plot.
+        r2: Calculated R^2 score of model fit.
     """
 
     # Convert time index to a uint array (in us) for scipy calculations
     x = series.index.to_numpy().astype('datetime64[us]').astype(np.uint64)
 
-    # Do the multi-segment constant regression and return the result
-    piecewise = pwlf.PiecewiseLinFit(x, series.values, degree=0)
-    breakpoints = piecewise.fit(num_segments)
-    return pd.Series(shift(piecewise.predict(breakpoints), -1, cval=np.NaN),
-                     index=breakpoints.astype('datetime64[us]'))
+    # Do a multi-segment constant regression
+    model = pwlf.PiecewiseLinFit(x, series.values, degree=0)
+    breakpoints = model.fit(num_segments)
+    regression = model.predict(x)
+
+    # Construct the Series of regression results
+    result = pd.Series(
+        model.predict(breakpoints),
+        index=breakpoints.astype('datetime64[us]')
+    )
+    result = result.shift(-1, fill_value=result[-1])
+    r2 = sklearn.metrics.r2_score(series.values, regression)
+
+    return result, r2
 
 
 def infer_timezone(records):
