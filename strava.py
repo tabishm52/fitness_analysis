@@ -27,6 +27,7 @@ def process_one_activity(filename, path, cache=None):
             'Hash': np.nan,
             'Timezone': np.nan,
             'Has Location': False,
+            'Max Heart Rate': np.nan,
             'Observed FTP': np.nan,
         }
 
@@ -43,6 +44,7 @@ def process_one_activity(filename, path, cache=None):
                 'Hash': hash_val,
                 'Timezone': cache.at[filename, 'Timezone'],
                 'Has Location': cache.at[filename, 'Has Location'],
+                'Max Heart Rate': cache.at[filename, 'Max Heart Rate'],
                 'Observed FTP': cache.at[filename, 'Observed FTP'],
             }
     except KeyError:
@@ -60,15 +62,23 @@ def process_one_activity(filename, path, cache=None):
         timezone = np.nan
         has_location = False
 
+    # Calculate maximum heart rate observed during activity
+    try:
+        max_hr = records['heart_rate'].max()
+    except KeyError:
+        # No heart rate data in file
+        max_hr = np.nan
+
     # Estimate FTP by calculating maximum 20-minute effort in file
     try:
         observed_ftp = (
-            np.max(
+                np.max(
                 records['power']
                 .resample('S')
                 .ffill()
                 .rolling(20*60)
                 .mean()
+                .max()
             )
         )
     except KeyError:
@@ -80,6 +90,7 @@ def process_one_activity(filename, path, cache=None):
         'Hash': hash_val,
         'Timezone': timezone,
         'Has Location': has_location,
+        'Max Heart Rate': max_hr,
         'Observed FTP': observed_ftp,
     }
 
@@ -186,6 +197,7 @@ def load_strava_activities(path, home_tz, recalculate=False):
     df['Elevation'] = csv['Elevation Gain'] / 0.3048 # Convert m to ft
     df['Elapsed Time'] = csv['Elapsed Time'] # In seconds
     df['Moving Time'] = csv['Moving Time'] # In seconds
+    df['Max Heart Rate'] = calcs['Max Heart Rate'] # In beats per minute
     df['Observed FTP'] = calcs['Observed FTP'] # In watts
     df['Filename'] = csv['Filename']
 
