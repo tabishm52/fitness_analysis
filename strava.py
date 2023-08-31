@@ -28,7 +28,7 @@ def process_one_activity(filename, path, cache=None):
             'Timezone': np.nan,
             'Has Location': False,
             'Max Heart Rate': np.nan,
-            'Observed FTP': np.nan,
+            'Max Avg Power': np.nan,
         }
 
     # Calculate hash of file - to make sure cached results are valid
@@ -45,7 +45,7 @@ def process_one_activity(filename, path, cache=None):
                 'Timezone': cache.at[filename, 'Timezone'],
                 'Has Location': cache.at[filename, 'Has Location'],
                 'Max Heart Rate': cache.at[filename, 'Max Heart Rate'],
-                'Observed FTP': cache.at[filename, 'Observed FTP'],
+                'Max Avg Power': cache.at[filename, 'Max Avg Power'],
             }
     except KeyError:
         pass
@@ -69,21 +69,19 @@ def process_one_activity(filename, path, cache=None):
         # No heart rate data in file
         max_hr = np.nan
 
-    # Estimate FTP by calculating maximum 20-minute effort in file
+    # Calculate maximum average power over 20 minutes during activity
     try:
-        observed_ftp = (
-                np.max(
-                records['power']
-                .resample('S')
-                .ffill()
-                .rolling(20*60)
-                .mean()
-                .max()
-            )
+        max_avg_power = (
+            records['power']
+            .resample('S')
+            .ffill()
+            .rolling(20*60)
+            .mean()
+            .max()
         )
     except KeyError:
         # No power data in file
-        observed_ftp = np.nan
+        max_avg_power = np.nan
 
     return {
         'Filename': filename,
@@ -91,7 +89,7 @@ def process_one_activity(filename, path, cache=None):
         'Timezone': timezone,
         'Has Location': has_location,
         'Max Heart Rate': max_hr,
-        'Observed FTP': observed_ftp,
+        'Max Avg Power': max_avg_power,
     }
 
 
@@ -198,7 +196,7 @@ def load_strava_activities(path, home_tz, recalculate=False):
     df['Elapsed Time'] = csv['Elapsed Time'] # In seconds
     df['Moving Time'] = csv['Moving Time'] # In seconds
     df['Max Heart Rate'] = calcs['Max Heart Rate'] # In beats per minute
-    df['Observed FTP'] = calcs['Observed FTP'] # In watts
+    df['Max Avg Power (20 min)'] = calcs['Max Avg Power'] # In watts
     df['Filename'] = csv['Filename']
 
     return df.set_index('Date').sort_index()
