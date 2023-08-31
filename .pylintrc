@@ -278,8 +278,7 @@ max-module-lines=99999
 
 # String used as indentation unit.  The internal Google style guide mandates 2
 # spaces.  Google's externaly-published style guide says 4, consistent with
-# PEP 8.  Here, we use 2 spaces, for conformity with many open-sourced Google
-# projects (like TensorFlow).
+# PEP 8.
 indent-string='    '
 
 # Number of spaces of indent required inside a hanging  or continued line.
@@ -424,6 +423,6 @@ valid-metaclass-classmethod-first-arg=mcs
 
 # Exceptions that will emit a warning when being caught. Defaults to
 # "Exception"
-overgeneral-exceptions=StandardError,
-                       Exception,
-                       BaseException
+overgeneral-exceptions=builtins.StandardError,
+                       builtins.Exception,
+                       builtins.BaseException
