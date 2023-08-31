@@ -110,27 +110,51 @@ def load_mnd_data(path, eer_func, window):
         )
     )
     calories.index.rename('Date', inplace=True)
-    calories.fillna(0, inplace=True)
 
     # Create an 'adjusted food' column that fills in a rolling average for
     # days where no food was logged
-    food_masked = (
-        calories['Food']
-        .mask(calories['Food'] == 0)
-    )
     calories['Food Adj'] = (
-        food_masked.fillna(
-            food_masked
+        calories['Food'].fillna(
+            calories['Food']
             .rolling(window, min_periods=window//2, center=True)
             .mean()
         )
     )
 
     # Calculate net calorie balance for each day
+    calories.fillna(0, inplace=True)
     calories['Net Daily'] = (
         calories['Food Adj']
         - calories['Baseline']
         - calories['Exercise']
     )
+
+    # Calculate rolling average of net calorie balance
+    calories['Net Recorded'] = (
+        calories['Net Daily']
+        .rolling(window, min_periods=window//2, center=True)
+        .mean()
+    )
+
+    # Convert observed weight gain/loss in lbs/week to calories/day
+    calories['Net Observed'] = 500 * weight['Rate']
+
+    # Calculate "accuracy" of calorie counting relative to actual weight loss
+    avg_food_recorded = (
+        calories['Food Adj']
+        .rolling(window, min_periods=window//2, center=True)
+        .mean()
+    )
+    avg_exercise = (
+        calories['Exercise']
+        .rolling(window, min_periods=window//2, center=True)
+        .mean()
+    )
+    avg_consumption_observed = (
+        calories['Baseline']
+        + avg_exercise
+        + calories['Net Observed']
+    )
+    calories['Accuracy'] = avg_food_recorded / avg_consumption_observed
 
     return weight, calories
