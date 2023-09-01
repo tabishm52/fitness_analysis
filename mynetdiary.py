@@ -96,7 +96,7 @@ def load_mnd_data(path, eer_func, window):
         mnd_data['Food']
         .resample('D', on='Date & Time')
         ['Calories, cals']
-        .sum()
+        .sum(min_count=1)
     )
     calories['Exercise'] = (
         mnd_data['Exercise']
@@ -104,9 +104,12 @@ def load_mnd_data(path, eer_func, window):
         ['Calories']
         .sum()
     )
+    calories['Exercise'].fillna(0, inplace=True)
     calories['Baseline'] = (
         eer_func(
-            weight['Smoothed'].reindex(calories.index, method='nearest')
+            weight['Smoothed']
+            .ffill()
+            .reindex(calories.index, method='ffill')
         )
     )
     calories.index.rename('Date', inplace=True)
@@ -122,7 +125,6 @@ def load_mnd_data(path, eer_func, window):
     )
 
     # Calculate net calorie balance for each day
-    calories.fillna(0, inplace=True)
     calories['Net Daily'] = (
         calories['Food Adj']
         - calories['Baseline']
