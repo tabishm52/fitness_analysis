@@ -25,3 +25,5 @@ from .mynetdiary import eer_female
 from .mynetdiary import load_mnd_data
 
 from .strava import load_strava_activities
+
+from .commute import load_process_commutes
