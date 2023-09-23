@@ -26,4 +26,4 @@ from .mynetdiary import load_mnd_data
 
 from .strava import load_strava_activities
 
-from .commute import load_process_commutes
+from .commute import load_commute_activities

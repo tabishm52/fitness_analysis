@@ -8,40 +8,8 @@ import pandas as pd
 from . import utils
 
 
-def load_and_split_activities(files, path, delta):
-    """Splits a set of activities and yields record data from each activity.
-
-    Generator function that loads data from a list of activity files and then
-    splits the data from each activity whenever the time gap between two
-    adjacent rows of data exceeds 'delta'.
-
-    Args:
-        files: List of activity files to process.
-        path: Path to directory containing the files.
-        delta: Size of time gap at which to split activities.
-
-    Yields:
-        DataFrames of sensor records from each (potentially split) activity.
-    """
-
-    # Loading FIT files is slow, so parallelize reading of files
-    file_paths = (os.path.join(path, filename) for filename in files)
-    with multiprocessing.Pool() as p:
-        data = p.map(utils.parser.parse, file_paths)
-
-    for records, _, _ in data:
-        # Split records into separate groups wherever there is a difference
-        # greater than 'delta' between the indices of two adjacent rows
-        group_ids = (records.index.to_series().diff() > delta).cumsum()
-        grouped = records.groupby(group_ids, sort=False)
-
-        # Yield each group separately
-        for _, group in grouped:
-            yield group
-
-
-def process_one_commute(records):
-    """Calculate summary metrics for one commute activity"""
+def process_one_commute(activity, records):
+    """Calculate summary metrics for one commute activity."""
 
     # Compute the date of the activity in local time
     timezone = utils.infer_timezone(records)
@@ -60,43 +28,94 @@ def process_one_commute(records):
     )
 
     # Elapsed time is the difference between the first and last timestamps
-    elapsed_time = records.index[-1] - records.index[0]
+    elapsed_time = (
+        records.index[-1]
+        - records.index[0]
+    )
 
-    # Either look up speed, or calculate it as derivative of distance
+    # Try to look up speed, else calculate it as derivative of distance
     # The derivative is super noisy but good enough to calculate moving time
     try:
-        speed = records['speed'].resample('S').interpolate()
+        speed = (
+            records['speed']
+            .resample('S')
+            .interpolate()
+        )
     except KeyError:
-        speed = records['distance'].resample('S').interpolate().diff() * 3600.0
+        speed = 3600.0 * (
+            records['distance']
+            .resample('S')
+            .interpolate()
+            .diff()
+        )
 
     # Moving time defined as whenever speed > 1 mile per hour
     moving_time = pd.Timedelta(speed[speed > 1.609344].count(), 's')
 
     return {
         'Date': date,
+        'Description': activity['Description'],
         'Direction': direction,
         'Distance': distance,
         'Elapsed Time': elapsed_time,
         'Moving Time': moving_time,
+        'Filename': activity['Filename'],
     }
 
 
-def load_process_commutes(files, path):
-    """Load and calculate summary metrics for a set of commute activities.
+def split_and_process_commutes(activities, path, delta):
+    """Splits activities and yields summary metrics on each split.
 
-    Splits commute activities into separate activities for each direction of the
-    commute, and then calculates metrics on each commute direction. The activity
-    files can be a mix of commutes recorded as separate one-way activities and
-    commutes recorded as a single round-trip activity, with a pause of at least
-    one hour between the two directions of the commute.
+    Generator function that splits the data from a set of activities whenever
+    the time gap between two adjacent rows of data exceeds 'delta', and then
+    yields commute summary metrics on each split.
 
     Args:
-        files: List of activity files to process.
-        path: Path to directory containing the files.
+        activity: DataFrame of activity files to load and process.
+        path: Path to Strava export directory.
+        delta: Size of time gap at which to split activities.
 
-    Returns:
-        DataFrame of commutes with related activity metrics.
+    Yields:
+        Dicts of summary metrics from each split.
     """
 
-    records = load_and_split_activities(files, path, pd.Timedelta(1, 'h'))
-    return pd.DataFrame(map(process_one_commute, records)).set_index('Date')
+    # Loading FIT files is slow, so parallelize reading of files
+    file_paths = (os.path.join(path, f) for f in activities['Filename'])
+    with multiprocessing.Pool() as p:
+        data = p.map(utils.parser.parse, file_paths)
+
+    activity_rows = (row for _, row in activities.iterrows())
+    commute_records = (records for records, _, _ in data)
+
+    for activity, records in zip(activity_rows, commute_records):
+        # Split records into separate groups wherever there is a difference
+        # greater than 'delta' between the indices of two adjacent rows
+        group_ids = (records.index.to_series().diff() > delta).cumsum()
+        grouped = records.groupby(group_ids, sort=False)
+
+        # Yield metrics on each split separately
+        for _, group in grouped:
+            yield process_one_commute(activity, group)
+
+
+def load_commute_activities(activities, path, delta=pd.Timedelta(1, 'h')):
+    """Calculate summary metrics for a set of commute activities.
+
+    Splits commute activities into separate activities for each direction of
+    the commute, and then calculates metrics on each commute direction.
+
+    The activity files can be a mix of commutes recorded as separate one-way
+    activities and commutes recorded as a single round-trip activity, with a
+    pause of at least 'delta' between the two directions of the commute.
+
+    Args:
+        activity: DataFrame of activity files to load and process, usually a
+          filtered list from load_strava_activities().
+        path: Path to Strava export directory.
+
+    Returns:
+        DataFrame of commute activities with summary metrics.
+    """
+
+    results = split_and_process_commutes(activities, path, delta)
+    return pd.DataFrame(results).set_index('Date')
