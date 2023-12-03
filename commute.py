@@ -40,25 +40,11 @@ def process_one_commute(activity, records):
             - records['distance'].min()
         )
 
-        # Look up speed, or calculate as smoothed derivative of distance
-        try:
-            speed = (
-                records['speed']
-                .resample('S')
-                .interpolate()
-            )
-        except KeyError:
-            speed = 3600.0 * (
-                records['distance']
-                .resample('S')
-                .interpolate()
-                .diff()
-                .rolling(3)
-                .mean()
-            )
-
-        # Moving time defined as whenever speed > 1 km per hour
-        moving_time = pd.Timedelta(speed[speed > 1.0].count(), 's')
+        # Calculate moving time by excluding periods where speed is less than
+        # 1 km per hour for at least 10 seconds
+        inactive_periods = utils.identify_inactive_periods(
+            records['distance'], 1.0 / 3600.0, pd.Timedelta(10, 's'))
+        moving_time = pd.Timedelta((~inactive_periods).sum(), 's')
 
     return {
         'Date': date,

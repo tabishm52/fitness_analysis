@@ -164,3 +164,35 @@ def infer_timezone(records):
     idx = points.apply(pd.Series.first_valid_index).max()
     lat, lng = points.loc[idx]
     return tz_finder.timezone_at(lng=lng, lat=lat)
+
+
+def identify_inactive_periods(series, activity_threshold, min_duration):
+    """Identify periods where the value of a time series is not changing
+    
+    Returns a Boolean Series identifying the periods where the velocity of
+    'series' (in units per second) remains below 'activity_threshold' for at
+    least a 'min_duration' span of time.
+
+    Args:
+        series: Time-indexed Series.
+        activity_threshold: Velocity, in units per second, below which values
+          of 'series' are considered inactive.
+        min_duration: Timedelta object, should be greater than 1 second.
+    
+    Returns:
+        Time-indexed Series of Boolean values.
+    """
+
+    # Calculate the derivative of the values of series, in units per second
+    # (this will be noisy but works well enough for our purposes)
+    velocity = series.resample('S').interpolate().diff()
+    below_threshold = velocity < activity_threshold
+
+    # Split series into segments where velocity remains above or below
+    # threshold, then calculate the duration of each segment
+    group_ids = below_threshold.diff().cumsum()
+    grouped = velocity.groupby(group_ids, sort=False)
+    durations = group_ids.map(grouped.count())
+
+    # Return True where series < activity_threshold for at least min_duration
+    return (durations >= min_duration.seconds) & below_threshold
