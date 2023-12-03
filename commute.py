@@ -106,7 +106,7 @@ def split_and_process_commutes(activities, path, delta):
             yield process_one_commute(activity, group)
 
 
-def load_commute_activities(activities, path, delta=pd.Timedelta(1,'h')):
+def load_commute_activities(activities, path, delta=pd.Timedelta(90,'m')):
     """Calculate summary metrics for a set of commute activities.
 
     Identifies commute activities, splits commutes into separate activities for
