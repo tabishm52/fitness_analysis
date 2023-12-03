@@ -33,8 +33,7 @@ def process_one_commute(activity, records):
         - records.index[0]
     )
 
-    # Try to look up speed, else calculate it as derivative of distance
-    # The derivative is super noisy but good enough to calculate moving time
+    # Try to look up speed, else calculate as smoothed derivative of distance
     try:
         speed = (
             records['speed']
@@ -47,10 +46,12 @@ def process_one_commute(activity, records):
             .resample('S')
             .interpolate()
             .diff()
+            .rolling(3)
+            .mean()
         )
 
-    # Moving time defined as whenever speed > 1 mile per hour
-    moving_time = pd.Timedelta(speed[speed > 1.609344].count(), 's')
+    # Moving time defined as whenever speed > 1 km per hour
+    moving_time = pd.Timedelta(speed[speed > 1.0].count(), 's')
 
     return {
         'Date': date,
