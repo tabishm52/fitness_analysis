@@ -82,6 +82,15 @@ def split_and_process_commutes(activities, path, delta):
     commute_records = (records for records, _, _ in data)
 
     for activity, records in zip(activity_rows, commute_records):
+        # Drop periods of inactivity, to cover the cases where the GPS was left
+        # on all day rather than being paused between commute segments
+        try:
+            inactive_periods = utils.identify_inactive_periods(
+                records['distance'], 2.5 / 3600.0, delta)
+            records = records[(~inactive_periods).reindex(records.index)]
+        except KeyError:
+            pass
+
         # Split records into separate groups wherever there is a difference
         # greater than 'delta' between the indices of two adjacent rows
         group_ids = (records.index.to_series().diff() > delta).cumsum()
