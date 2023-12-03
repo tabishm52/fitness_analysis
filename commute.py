@@ -99,11 +99,12 @@ def split_and_process_commutes(activities, path, delta):
             yield process_one_commute(activity, group)
 
 
-def load_commute_activities(activities, path, delta=pd.Timedelta(1, 'h')):
+def load_commute_activities(activities, path, delta=pd.Timedelta(1,'h')):
     """Calculate summary metrics for a set of commute activities.
 
-    Splits commute activities into separate activities for each direction of
-    the commute, and then calculates metrics on each commute direction.
+    Identifies commute activities, splits commutes into separate activities for
+    each direction of the commute, and then calculates metrics on each commute
+    direction.
 
     The activity files can be a mix of commutes recorded as separate one-way
     activities and commutes recorded as a single round-trip activity, with a
@@ -118,5 +119,6 @@ def load_commute_activities(activities, path, delta=pd.Timedelta(1, 'h')):
         DataFrame of commute activities with summary metrics.
     """
 
-    results = split_and_process_commutes(activities, path, delta)
+    commutes = activities.loc[activities['Commute']]
+    results = split_and_process_commutes(commutes, path, delta)
     return pd.DataFrame(results).set_index('Date')
