@@ -3,6 +3,7 @@
 import multiprocessing
 import os
 
+import numpy as np
 import pandas as pd
 
 from . import utils
@@ -21,37 +22,43 @@ def process_one_commute(activity, records):
     else:
         direction = 'Afternoon'
 
-    # Determine total distance of activity in miles
-    distance = 0.6213712 * (
-        records['distance'].max()
-        - records['distance'].min()
-    )
-
     # Elapsed time is the difference between the first and last timestamps
     elapsed_time = (
         records.index[-1]
         - records.index[0]
     )
 
-    # Try to look up speed, else calculate as smoothed derivative of distance
-    try:
-        speed = (
-            records['speed']
-            .resample('S')
-            .interpolate()
-        )
-    except KeyError:
-        speed = 3600.0 * (
-            records['distance']
-            .resample('S')
-            .interpolate()
-            .diff()
-            .rolling(3)
-            .mean()
+    # Some activities (e.g., GPX files) do not contain 'distance' information
+    if 'distance' not in records.columns:
+        distance = np.nan
+        moving_time = np.nan
+
+    else:
+        # Determine total distance of activity in miles
+        distance = 0.6213712 * (
+            records['distance'].max()
+            - records['distance'].min()
         )
 
-    # Moving time defined as whenever speed > 1 km per hour
-    moving_time = pd.Timedelta(speed[speed > 1.0].count(), 's')
+        # Look up speed, or calculate as smoothed derivative of distance
+        try:
+            speed = (
+                records['speed']
+                .resample('S')
+                .interpolate()
+            )
+        except KeyError:
+            speed = 3600.0 * (
+                records['distance']
+                .resample('S')
+                .interpolate()
+                .diff()
+                .rolling(3)
+                .mean()
+            )
+
+        # Moving time defined as whenever speed > 1 km per hour
+        moving_time = pd.Timedelta(speed[speed > 1.0].count(), 's')
 
     return {
         'Date': date,
