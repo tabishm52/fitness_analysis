@@ -73,7 +73,7 @@ def process_one_activity(filename, path, cache=None):
     try:
         max_avg_power = (
             records['power']
-            .resample('S')
+            .resample('s')
             .ffill()
             .rolling(20*60)
             .mean()

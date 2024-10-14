@@ -42,7 +42,8 @@ def merge_excel_files(path):
             continue
 
         excel = pd.read_excel(os.path.join(path, f), sheet_name=None)
-        for k in excel:
+        nonempty_sheets = (k for k in excel if not excel[k].empty)
+        for k in nonempty_sheets:
             if k in data:
                 data[k] = pd.concat([data[k], excel[k]]).reset_index(drop=True)
             else:
@@ -141,7 +142,7 @@ def time_series_constant_regression(series, num_segments):
         model.predict(breakpoints),
         index=breakpoints.astype('datetime64[us]')
     )
-    result = result.shift(-1, fill_value=result[-1])
+    result = result.shift(-1, fill_value=result.iloc[-1])
     r2 = sklearn.metrics.r2_score(series.values, regression)
 
     return result, r2
@@ -185,7 +186,7 @@ def identify_inactive_periods(series, activity_threshold, min_duration):
 
     # Calculate the derivative of the values of series, in units per second
     # (this will be noisy but works well enough for our purposes)
-    velocity = series.resample('S').interpolate().diff()
+    velocity = series.resample('s').interpolate().diff()
     below_threshold = velocity < activity_threshold
 
     # Split series into segments where velocity remains above or below

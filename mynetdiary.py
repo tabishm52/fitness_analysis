@@ -20,7 +20,7 @@ def eer_male(weight, height, dob, pa=1.0):
     """
 
     # Calculate time series of age in fractional years
-    age = (weight.index - np.datetime64(dob)).astype('timedelta64[D]') / 365.25
+    age = (weight.index - np.datetime64(dob)).days / 365.25
 
     # Perform male EER calculation per MyNetDiary
     # https://www.mynetdiary.com/supportArticle.do?articleId=328
@@ -104,7 +104,7 @@ def load_mnd_data(path, eer_func, window):
         ['Calories']
         .sum()
     )
-    calories['Exercise'].fillna(0, inplace=True)
+    calories['Exercise'] = calories['Exercise'].fillna(0)
     calories['Baseline'] = (
         eer_func(
             weight['Smoothed']
