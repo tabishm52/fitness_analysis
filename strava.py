@@ -164,7 +164,9 @@ def load_strava_activities(path, home_tz, recalculate=False):
     )
 
     # Set the UTC date and time of the activity as the index
-    csv['Activity Date'] = pd.to_datetime(csv['Activity Date'])
+    csv['Activity Date'] = (
+        pd.to_datetime(csv['Activity Date'], format='%b %d, %Y, %I:%M:%S %p')
+    )
     csv.set_index('Activity Date', inplace=True)
 
     # Run a set of calculations on all activity files
