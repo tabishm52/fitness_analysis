@@ -11,13 +11,10 @@ import pandas as pd
 from . import utils
 
 
-def get_cache_path():
-    """Utility function to retrieve path to cached results."""
-
-    return os.path.join(os.path.dirname(__file__), 'cache.csv')
+CACHE_FNAME = 'bicycle_cache.csv'
 
 
-def process_one_activity(filename, path, cache=None):
+def process_one_activity(filename, path, cache):
     """Run calculations on a single activity."""
 
     # Manual activities in Strava don't have a related activity file
@@ -93,7 +90,7 @@ def process_one_activity(filename, path, cache=None):
     }
 
 
-def process_activities(files, path, recalculate=False):
+def process_activities(files, path, cache_dir=None):
     """Run calculations on a set of activities.
 
     Calculates metrics on a set of activity files. Loading of activities in FIT
@@ -104,23 +101,20 @@ def process_activities(files, path, recalculate=False):
     Args:
         files: List of activity files to process.
         path: Path to directory containing the files.
-        recalculate: Pass True to recalculate all results, pass file name or
-          iterable of file names to recalculate only certain data files.
+        cache_dir: Optional path to directory for cache of results.
 
     Returns:
         DataFrame of calculation results
     """
 
     # Load cached calculation results if available
-    try:
-        cache = pd.read_csv(get_cache_path()).set_index('Filename')
-        if isinstance(recalculate, str):
-            cache = cache[~cache.index.isin([recalculate])]
-        elif hasattr(recalculate, '__iter__'):
-            cache = cache[~cache.index.isin(recalculate)]
-        elif recalculate:
+    if cache_dir is not None:
+        cache_path = os.path.join(cache_dir, CACHE_FNAME)
+        try:
+            cache = pd.read_csv(cache_path).set_index('Filename')
+        except FileNotFoundError:
             cache = None
-    except FileNotFoundError:
+    else:
         cache = None
 
     # Run calculations on all activity files, leveraging cached results
@@ -128,16 +122,17 @@ def process_activities(files, path, recalculate=False):
     with multiprocessing.Pool() as p:
         calcs = pd.DataFrame(p.map(processor, files), index=files.index)
 
-    # Add new results to cache, deduplicate and save
-    new_cache = pd.concat([calcs.set_index('Filename'), cache])
-    new_cache = new_cache[~new_cache.index.isna()]
-    new_cache = new_cache[~new_cache.index.duplicated()]
-    new_cache.sort_index().to_csv(get_cache_path())
+    if cache_dir is not None:
+        # Add new results to cache, deduplicate and save
+        new_cache = pd.concat([calcs.set_index('Filename'), cache])
+        new_cache = new_cache[~new_cache.index.isna()]
+        new_cache = new_cache[~new_cache.index.duplicated()]
+        new_cache.sort_index().to_csv(cache_path)
 
     return calcs
 
 
-def load_strava_activities(path, home_tz, recalculate=False):
+def load_strava_activities(path, home_tz, cache_dir=None):
     """Loads bicycling activity data from a Strava data export.
 
     In addition to loading Strava's activities.csv, calculates certain
@@ -150,8 +145,7 @@ def load_strava_activities(path, home_tz, recalculate=False):
         path: Path to Strava export directory.
         home_tz: Timezone to use as a default for activities on a trainer or
           for activities where location data is not available.
-        recalculate: Pass True to recalculate all results, pass file name or
-          iterable of file names to recalculate only certain data files.
+        cache_dir: Optional path to directory for cache of results.
 
     Returns:
         DataFrame of Strava bicycling activity data.
@@ -170,7 +164,7 @@ def load_strava_activities(path, home_tz, recalculate=False):
     csv.set_index('Activity Date', inplace=True)
 
     # Run a set of calculations on all activity files
-    calcs = process_activities(csv['Filename'], path, recalculate)
+    calcs = process_activities(csv['Filename'], path, cache_dir)
 
     # Infer activities that were performed on a stationary trainer
     calcs['Trainer'] = (
