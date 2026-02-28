@@ -52,6 +52,34 @@ def merge_excel_files(path):
     return data
 
 
+def pwlf_wrapper(series, units, breaks=None, num_segments=None):
+    """Worker function for piecewise linear regression on a time series."""
+
+    # Convert time index to a uint array (in us) for scipy calculations
+    time_us = series.index.to_numpy().astype('datetime64[us]').astype(np.uint64)
+
+    # Calculate the conversion factor to desired rate units
+    c = np.uint64(np.timedelta64(np.timedelta64(1, units), 'us'))
+
+    # Do a multi-segment piecewise linear regression. Use specified breakpoints
+    # if provided, otherwise let pwlf pick the breakpoints.
+    model = pwlf.PiecewiseLinFit(time_us, series.values)
+    if breaks is not None:
+        breaks_us = np.array(breaks).astype('datetime64[us]').astype(np.uint64)
+        model.fit_with_breaks(breaks_us)
+    else:
+        breaks_us = model.fit(num_segments)
+
+    # Construct the DataFrame of regression results
+    regression = model.predict(time_us)
+    result = pd.DataFrame(index=breaks_us.astype('datetime64[us]'))
+    result['Value'] = model.predict(breaks_us)
+    result['Rate'] = c * np.append(model.calc_slopes(), [np.nan])
+    r2 = sklearn.metrics.r2_score(series.values, regression)
+
+    return result, r2
+
+
 def time_series_piecewise_regression(series, num_segments, units):
     """Perform a piecewise linear regression on a time series.
 
@@ -69,24 +97,27 @@ def time_series_piecewise_regression(series, num_segments, units):
         r2: Calculated R^2 score of model fit.
     """
 
-    # Convert time index to a uint array (in us) for scipy calculations
-    x = series.index.to_numpy().astype('datetime64[us]').astype(np.uint64)
+    return pwlf_wrapper(series, units, num_segments=num_segments)
 
-    # Do a multi-segment piecewise linear regression
-    model = pwlf.PiecewiseLinFit(x, series.values)
-    breakpoints = model.fit(num_segments)
-    regression = model.predict(x)
 
-    # Get the conversion factor to desired rate units
-    c = np.uint64(np.timedelta64(np.timedelta64(1, units), 'us'))
+def time_series_piecewise_regression_with_breaks(series, breaks, units):
+    """Perform a piecewise linear regression with specified breakpoints.
 
-    # Construct the DataFrame of regression results
-    result = pd.DataFrame(index=breakpoints.astype('datetime64[us]'))
-    result['Value'] = model.predict(breakpoints)
-    result['Rate'] = c * np.append(model.calc_slopes(), [np.NaN])
-    r2 = sklearn.metrics.r2_score(series.values, regression)
+    Args:
+        series: Time-indexed Series on which to perform regression.
+        breaks: Iterable of Timestamps of breakpoints for piecewise regression.
+        units: Time unit to use for calculating slope at each breakpoint
+          (e.g., 'D' means calculate rate per day).
 
-    return result, r2
+    Returns:
+        Tuple of (result, r2).
+
+        result: Time-indexed DataFrame of breakpoints, with value and slope
+          calculated for each breakpoint.
+        r2: Calculated R^2 score of model fit.
+    """
+
+    return pwlf_wrapper(series, units, breaks=breaks)
 
 
 def time_series_linear_rate(series, units):
@@ -169,7 +200,7 @@ def infer_timezone(records):
 
 def identify_inactive_periods(series, activity_threshold, min_duration):
     """Identify periods where the value of a time series is not changing
-    
+
     Returns a Boolean Series identifying the periods where the velocity of
     'series' (in units per second) remains below 'activity_threshold' for at
     least a 'min_duration' span of time.
@@ -179,7 +210,7 @@ def identify_inactive_periods(series, activity_threshold, min_duration):
         activity_threshold: Velocity, in units per second, below which values
           of 'series' are considered inactive.
         min_duration: Timedelta object, should be greater than 1 second.
-    
+
     Returns:
         Time-indexed Series of Boolean values.
     """

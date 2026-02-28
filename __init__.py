@@ -18,6 +18,7 @@ Usage:
 """
 
 from .utils import time_series_piecewise_regression
+from .utils import time_series_piecewise_regression_with_breaks
 from .utils import time_series_constant_regression
 
 from .mynetdiary import eer_male
