@@ -74,7 +74,8 @@ def split_and_process_commutes(activities, path, delta):
     """
 
     # Loading FIT files is slow, so parallelize reading of files
-    file_paths = (os.path.join(path, f) for f in activities['Filename'])
+    file_names = activities['Filename'][activities['Filename'].notna()]
+    file_paths = (os.path.join(path, f) for f in file_names)
     with multiprocessing.Pool() as p:
         data = p.map(utils.parser.parse, file_paths)
 
@@ -116,6 +117,7 @@ def load_commute_activities(activities, path, delta=pd.Timedelta(90,'m')):
         activity: DataFrame of activity files to load and process, usually a
           filtered list from load_strava_activities().
         path: Path to Strava export directory.
+        delta: Size of time gap at which to split activities.
 
     Returns:
         DataFrame of commute activities with summary metrics.
