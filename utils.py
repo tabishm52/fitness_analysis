@@ -192,9 +192,19 @@ def infer_timezone(records):
         Timezone string, or None if no timezone has been matched
     """
 
-    points = records[['latitude', 'longitude']]
+    try:
+        points = records[['latitude', 'longitude']]
+    except KeyError:
+        return None
+
     idx = points.apply(pd.Series.first_valid_index).max()
+    if idx is None:
+        return None
+
     lat, lng = points.loc[idx]
+    if pd.isna(lat) or pd.isna(lng):
+        return None
+
     return tz_finder.timezone_at(lng=lng, lat=lat)
 
 
@@ -227,4 +237,4 @@ def identify_inactive_periods(series, activity_threshold, min_duration):
     durations = group_ids.map(grouped.count())
 
     # Return True where series < activity_threshold for at least min_duration
-    return (durations >= min_duration.seconds) & below_threshold
+    return (durations >= min_duration.total_seconds()) & below_threshold

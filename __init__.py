@@ -11,7 +11,7 @@ www.mynetdiary.com.
 
 Usage:
 
->>> import fitness_analyis as fa
+>>> import fitness_analysis as fa
 
 >>> weight, calories = fa.load_mnd_data('path/to/MyNetDiary/files/', ...)
 >>> activities = fa.load_strava_activities('path/to/Strava/archive/', ...)

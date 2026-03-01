@@ -51,13 +51,10 @@ def process_one_activity(filename, path, cache):
     records, _, _ = utils.parser.parse(full_path)
 
     # Determine timezone using first valid lat,lng position in the file
-    try:
-        timezone = utils.infer_timezone(records)
-        has_location = True
-    except KeyError:
-        # No valid lat,lng data in file
+    timezone = utils.infer_timezone(records)
+    has_location = timezone is not None
+    if timezone is None:
         timezone = np.nan
-        has_location = False
 
     # Calculate maximum heart rate observed during activity
     try:
@@ -124,7 +121,10 @@ def process_activities(files, path, cache_dir=None):
 
     if cache_dir is not None:
         # Add new results to cache, deduplicate and save
-        new_cache = pd.concat([calcs.set_index('Filename'), cache])
+        if cache is not None:
+            new_cache = pd.concat([calcs.set_index('Filename'), cache])
+        else:
+            new_cache = calcs.set_index('Filename')
         new_cache = new_cache[~new_cache.index.isna()]
         new_cache = new_cache[~new_cache.index.duplicated()]
         new_cache.sort_index().to_csv(cache_path)

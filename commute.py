@@ -14,7 +14,10 @@ def process_one_commute(activity, records):
 
     # Compute the date of the activity in local time
     timezone = utils.infer_timezone(records)
-    date = records.index[0].tz_convert(timezone).tz_localize(None)
+    if timezone is None:
+        date = records.index[0].tz_localize(None)
+    else:
+        date = records.index[0].tz_convert(timezone).tz_localize(None)
 
     # Mark morning vs afternoon activities
     if date.hour < 12:
@@ -88,7 +91,12 @@ def split_and_process_commutes(activities, path, delta):
         try:
             inactive_periods = utils.identify_inactive_periods(
                 records['distance'], 2.5 / 3600.0, delta)
-            records = records[(~inactive_periods).reindex(records.index)]
+            active_periods = (
+                (~inactive_periods)
+                .reindex(records.index)
+                .fillna(True)
+            )
+            records = records[active_periods]
         except KeyError:
             pass
 
@@ -125,4 +133,17 @@ def load_commute_activities(activities, path, delta=pd.Timedelta(90,'m')):
 
     commutes = activities.loc[activities['Commute']]
     results = split_and_process_commutes(commutes, path, delta)
-    return pd.DataFrame(results).set_index('Date')
+    data = pd.DataFrame(results)
+
+    if data.empty:
+        columns = [
+            'Description',
+            'Direction',
+            'Distance',
+            'Elapsed Time',
+            'Moving Time',
+            'Filename',
+        ]
+        return pd.DataFrame(columns=columns, index=pd.Index([], name='Date'))
+
+    return data.set_index('Date')
