@@ -33,7 +33,7 @@ def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
         A mapping of merged sheet data keyed by sheet name.
     """
 
-    data: dict[str, pd.DataFrame] = {}
+    data_parts: dict[str, list[pd.DataFrame]] = {}
     files = os.listdir(path)
     files.sort()
 
@@ -43,17 +43,19 @@ def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
             continue
 
         excel = pd.read_excel(os.path.join(path, f), sheet_name=None)
-        nonempty_sheets = (k for k in excel if not excel[k].empty)
-        for k in nonempty_sheets:
-            if k in data:
-                data[k] = (
-                    pd.concat([data[k], excel[k]])
-                    .reset_index(drop=True)
-                )
-            else:
-                data[k] = excel[k]
+        for sheet_name, sheet_data in excel.items():
+            if sheet_data.empty:
+                continue
+            data_parts.setdefault(sheet_name, []).append(sheet_data)
 
-    return data
+    merged_data: dict[str, pd.DataFrame] = {}
+    for sheet_name, parts in data_parts.items():
+        if len(parts) == 1:
+            merged_data[sheet_name] = parts[0]
+        else:
+            merged_data[sheet_name] = pd.concat(parts).reset_index(drop=True)
+
+    return merged_data
 
 
 def _to_time_us_uint64(index: pd.Index | Iterable[pd.Timestamp]) -> np.ndarray:
@@ -315,9 +317,8 @@ def identify_inactive_periods(
 
     # Split series into segments where velocity remains above or below
     # threshold, then calculate each segment duration.
-    group_ids = below_threshold.diff().cumsum()
-    grouped = velocity.groupby(group_ids, sort=False)
-    durations = group_ids.map(grouped.count())
+    group_ids = below_threshold.ne(below_threshold.shift()).cumsum()
+    durations = below_threshold.groupby(group_ids, sort=False).transform('size')
 
     # Return True where velocity stays below the threshold for min_duration.
     return (durations >= min_duration.total_seconds()) & below_threshold
