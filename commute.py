@@ -2,6 +2,9 @@
 
 import multiprocessing
 import os
+from collections.abc import Iterator
+from os import PathLike
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -9,7 +12,10 @@ import pandas as pd
 from . import utils
 
 
-def process_one_commute(activity, records):
+def process_one_commute(
+    activity: pd.Series,
+    records: pd.DataFrame,
+) -> dict[str, Any]:
     """Calculate summary metrics for one commute activity."""
 
     # Compute the date of the activity in local time
@@ -26,10 +32,7 @@ def process_one_commute(activity, records):
         direction = 'Afternoon'
 
     # Elapsed time is the difference between the first and last timestamps
-    elapsed_time = (
-        records.index[-1]
-        - records.index[0]
-    )
+    elapsed_time = records.index[-1] - records.index[0]
 
     # Some activities (e.g., GPX files) do not contain 'distance' information
     if 'distance' not in records.columns:
@@ -39,14 +42,14 @@ def process_one_commute(activity, records):
     else:
         # Determine total distance of activity in miles
         distance = 0.6213712 * (
-            records['distance'].max()
-            - records['distance'].min()
+            records['distance'].max() - records['distance'].min()
         )
 
         # Calculate moving time by excluding periods where speed is less than
         # 1 km per hour for at least 10 seconds
         inactive_periods = utils.identify_inactive_periods(
-            records['distance'], 1.0 / 3600.0, pd.Timedelta(10, 's'))
+            records['distance'], 1.0 / 3600.0, pd.Timedelta(10, 's')
+        )
         moving_time = pd.Timedelta((~inactive_periods).sum(), 's')
 
     return {
@@ -60,7 +63,11 @@ def process_one_commute(activity, records):
     }
 
 
-def split_and_process_commutes(activities, path, delta):
+def split_and_process_commutes(
+    activities: pd.DataFrame,
+    path: str | PathLike[str],
+    delta: pd.Timedelta,
+) -> Iterator[dict[str, Any]]:
     """Splits activities and yields summary metrics on each split.
 
     Generator function that splits the data from a set of activities whenever
@@ -68,12 +75,12 @@ def split_and_process_commutes(activities, path, delta):
     yields commute summary metrics on each split.
 
     Args:
-        activity: DataFrame of activity files to load and process.
-        path: Path to Strava export directory.
+        activities: Activity files to load and process.
+        path: Strava export directory.
         delta: Size of time gap at which to split activities.
 
     Yields:
-        Dicts of summary metrics from each split.
+        Records with summary metrics from each split.
     """
 
     # Loading FIT files is slow, so parallelize reading of files
@@ -90,7 +97,8 @@ def split_and_process_commutes(activities, path, delta):
         # on all day rather than being paused between commute segments
         try:
             inactive_periods = utils.identify_inactive_periods(
-                records['distance'], 2.5 / 3600.0, delta)
+                records['distance'], 2.5 / 3600.0, delta
+            )
             active_periods = (
                 (~inactive_periods)
                 .reindex(records.index)
@@ -110,7 +118,11 @@ def split_and_process_commutes(activities, path, delta):
             yield process_one_commute(activity, group)
 
 
-def load_commute_activities(activities, path, delta=pd.Timedelta(90,'m')):
+def load_commute_activities(
+    activities: pd.DataFrame,
+    path: str | PathLike[str],
+    delta: pd.Timedelta = pd.Timedelta(90, 'm'),
+) -> pd.DataFrame:
     """Calculate summary metrics for a set of commute activities.
 
     Identifies commute activities, splits commutes into separate activities for
@@ -122,13 +134,12 @@ def load_commute_activities(activities, path, delta=pd.Timedelta(90,'m')):
     pause of at least 'delta' between the two directions of the commute.
 
     Args:
-        activity: DataFrame of activity files to load and process, usually a
-          filtered list from load_strava_activities().
-        path: Path to Strava export directory.
+        activities: Activity files to load and process.
+        path: Strava export directory.
         delta: Size of time gap at which to split activities.
 
     Returns:
-        DataFrame of commute activities with summary metrics.
+        Summary metrics from commute activities indexed by local Date.
     """
 
     commutes = activities.loc[activities['Commute']]

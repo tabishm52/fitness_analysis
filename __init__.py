@@ -1,8 +1,7 @@
 """Pre-processing of MyNetDiary and Strava fitness data.
 
-Provides functions for loading and processing of MyNetDiary and Strava fitness
-data into Pandas DataFrames. These DataFrames would typically be loaded into an
-interactive Jupyter notebook for analysis and plotting.
+Provides functions for loading and processing MyNetDiary and Strava fitness
+data into Pandas DataFrames that are convenient for analysis and plotting.
 
 The module assumes Strava data are an unzipped directory of a downloaded user
 account archive from www.strava.com. For MyNetDiary, the module assumes a

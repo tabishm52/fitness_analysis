@@ -1,22 +1,30 @@
 """Functions for processing MyNetDiary fitness data."""
 
+from collections.abc import Callable
+from os import PathLike
+
 import numpy as np
 import pandas as pd
 
 from . import utils
 
 
-def eer_male(weight, height, dob, pa=1.0):
+def eer_male(
+    weight: pd.Series,
+    height: float,
+    dob: str | np.datetime64 | pd.Timestamp,
+    pa: float = 1.0,
+) -> pd.Series:
     """Male estimated energy requirements (per day) from MyNetDiary.
 
     Args:
-        weight: Time-indexed Series of weight measurements in pounds.
+        weight: Time-indexed weight measurements in pounds.
         height: Height, in inches.
-        dob: Date of birth, as string or datetime64.
+        dob: Date of birth.
         pa: Activity level, 1.0 = sedentary, up to 1.45 for very active.
 
     Returns:
-        Time-indexed Series of calculated EER on dates of weight measurements.
+        Estimated daily energy requirement for each timestamp in ``weight``.
     """
 
     # Calculate time series of age in fractional years
@@ -27,17 +35,22 @@ def eer_male(weight, height, dob, pa=1.0):
     return 662 - 9.53 * age + pa * (7.23 * weight + 13.71 * height)
 
 
-def eer_female(weight, height, dob, pa=1.0):
+def eer_female(
+    weight: pd.Series,
+    height: float,
+    dob: str | np.datetime64 | pd.Timestamp,
+    pa: float = 1.0,
+) -> pd.Series:
     """Female estimated energy requirements (per day) from MyNetDiary.
 
     Args:
-        weight: Time-indexed Series of weight measurements in pounds.
+        weight: Time-indexed weight measurements in pounds.
         height: Height, in inches.
-        dob: Date of birth, as string or datetime64.
+        dob: Date of birth.
         pa: Activity level, 1.0 = sedentary, up to 1.45 for very active.
 
     Returns:
-        Time-indexed Series of calculated EER on dates of weight measurements.
+        Estimated daily energy requirement for each timestamp in ``weight``.
     """
 
     # Calculate time series of age in fractional years
@@ -48,20 +61,21 @@ def eer_female(weight, height, dob, pa=1.0):
     return 354 - 6.91 * age + pa * (4.25 * weight + 18.44 * height)
 
 
-def load_mnd_data(path, eer_func, window):
+def load_mnd_data(
+    path: str | PathLike[str],
+    eer_func: Callable[[pd.Series], pd.Series],
+    window: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Process weight and calorie data from a MyNetDiary data export.
 
     Args:
-        path: Path to MyNetDiary export directory.
-        eer_func: Function object that wraps eer_male or eer_female with height
+        path: MyNetDiary export directory.
+        eer_func: Callable that wraps eer_male or eer_female with height
           and dob fields specified by caller.
         window: Rolling window (in days) for averaging calculations.
 
     Returns:
-        Tuple of (weight, calories)
-
-        weight: DataFrame of processed weight data.
-        calories: DataFrame of processed calorie data.
+        Tuple containing processed weight and calorie metrics.
     """
 
     # Load MyNetDiary data

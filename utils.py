@@ -1,6 +1,8 @@
 """Common utility functions for fitness_analysis module."""
 
 import os
+from collections.abc import Iterable
+from os import PathLike
 
 import numpy as np
 import pandas as pd
@@ -12,27 +14,26 @@ import timezonefinder
 
 import activity_parser
 
-
 # Global objects that can be used throughout the fitness_analysis module
 parser = activity_parser.ActivityParser()
 tz_finder = timezonefinder.TimezoneFinder()
 
 
-def merge_excel_files(path):
+def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
     """Loads and merges data from all Excel files in a directory.
 
     Loads all sheets of all [xls,xlsx] files in a directory and merges them into
-    a single dictionary of DataFrames. Identically-named sheets from each Excel
-    file will be concatenated in alphabetical order of the Excel file names.
+    one mapping keyed by sheet name. Identically named sheets from each Excel
+    file are concatenated in alphabetical order of Excel file name.
 
     Args:
-        path: Path to directory of Excel files.
+        path: Directory of Excel files.
 
     Returns:
-        A dict of DataFrames.
+        A mapping of merged sheet data keyed by sheet name.
     """
 
-    data = {}
+    data: dict[str, pd.DataFrame] = {}
     files = os.listdir(path)
     files.sort()
 
@@ -45,18 +46,28 @@ def merge_excel_files(path):
         nonempty_sheets = (k for k in excel if not excel[k].empty)
         for k in nonempty_sheets:
             if k in data:
-                data[k] = pd.concat([data[k], excel[k]]).reset_index(drop=True)
+                data[k] = (
+                    pd.concat([data[k], excel[k]])
+                    .reset_index(drop=True)
+                )
             else:
                 data[k] = excel[k]
 
     return data
 
 
-def pwlf_wrapper(series, units, breaks=None, num_segments=None):
-    """Worker function for piecewise linear regression on a time series."""
+def pwlf_wrapper(
+    series: pd.Series,
+    units: str,
+    breaks: Iterable[pd.Timestamp] | None = None,
+    num_segments: int | None = None,
+) -> tuple[pd.DataFrame, float]:
+    """Worker function for piecewise linear regression on time-indexed data."""
 
     # Convert time index to a uint array (in us) for scipy calculations
-    time_us = series.index.to_numpy().astype('datetime64[us]').astype(np.uint64)
+    time_us = (
+        series.index.to_numpy().astype('datetime64[us]').astype(np.uint64)
+    )
 
     # Calculate the conversion factor to desired rate units
     c = np.uint64(np.timedelta64(np.timedelta64(1, units), 'us'))
@@ -80,56 +91,64 @@ def pwlf_wrapper(series, units, breaks=None, num_segments=None):
     return result, r2
 
 
-def time_series_piecewise_regression(series, num_segments, units):
+def time_series_piecewise_regression(
+    series: pd.Series,
+    num_segments: int,
+    units: str,
+) -> tuple[pd.DataFrame, float]:
     """Perform a piecewise linear regression on a time series.
 
     Args:
-        series: Time-indexed Series on which to perform regression.
+        series: Time-indexed values on which to perform regression.
         num_segments: Number of segments for piecewise regression.
         units: Time unit to use for calculating slope at each breakpoint
-          (e.g., 'D' means calculate rate per day).
+            (e.g., 'D' means calculate rate per day).
 
     Returns:
         Tuple of (result, r2).
 
-        result: Time-indexed DataFrame of breakpoints, with value and slope
-          calculated for each breakpoint.
+        result: Time-indexed breakpoints with value and slope
+            calculated for each breakpoint.
         r2: Calculated R^2 score of model fit.
     """
 
     return pwlf_wrapper(series, units, num_segments=num_segments)
 
 
-def time_series_piecewise_regression_with_breaks(series, breaks, units):
+def time_series_piecewise_regression_with_breaks(
+    series: pd.Series,
+    breaks: Iterable[pd.Timestamp],
+    units: str,
+) -> tuple[pd.DataFrame, float]:
     """Perform a piecewise linear regression with specified breakpoints.
 
     Args:
-        series: Time-indexed Series on which to perform regression.
+        series: Time-indexed values on which to perform regression.
         breaks: Iterable of Timestamps of breakpoints for piecewise regression.
         units: Time unit to use for calculating slope at each breakpoint
-          (e.g., 'D' means calculate rate per day).
+            (e.g., 'D' means calculate rate per day).
 
     Returns:
         Tuple of (result, r2).
 
-        result: Time-indexed DataFrame of breakpoints, with value and slope
-          calculated for each breakpoint.
+        result: Time-indexed breakpoints with value and slope
+            calculated for each breakpoint.
         r2: Calculated R^2 score of model fit.
     """
 
     return pwlf_wrapper(series, units, breaks=breaks)
 
 
-def time_series_linear_rate(series, units):
+def time_series_linear_rate(series: pd.Series, units: str) -> float:
     """Calculate the slope of the linear regression of a time series.
 
     Args:
-        series: Time-indexed Series on which to perform regression.
+        series: Time-indexed values on which to perform regression.
         units: Time unit to use for calculating slope (e.g., 'D' means calculate
           rate per day).
 
     Returns:
-        Calculated slope as a rate per 'units'
+        Calculated slope as a rate per ``units``.
     """
 
     # Convert time index to a uint array (in us) for scipy calculations
@@ -145,18 +164,21 @@ def time_series_linear_rate(series, units):
     return c * model.coef_[0]
 
 
-def time_series_constant_regression(series, num_segments):
+def time_series_constant_regression(
+    series: pd.Series,
+    num_segments: int,
+) -> tuple[pd.Series, float]:
     """Fit a segmented constant model to a time series.
 
     Args:
-        series: Time-indexed Series on which to perform regression.
+        series: Time-indexed values on which to perform regression.
         num_segments: Number of segments for model.
 
     Returns:
         Tuple of (result, r2).
 
-        result: Time-indexed Series of breakpoints, with constant value fitted
-          at each breakpoint. Use result.resample().ffill() to plot.
+        result: Time-indexed breakpoints with fitted constant value
+            at each breakpoint. Use result.resample().ffill() to plot.
         r2: Calculated R^2 score of model fit.
     """
 
@@ -171,7 +193,7 @@ def time_series_constant_regression(series, num_segments):
     # Construct the Series of regression results
     result = pd.Series(
         model.predict(breakpoints),
-        index=breakpoints.astype('datetime64[us]')
+        index=breakpoints.astype('datetime64[us]'),
     )
     result = result.shift(-1, fill_value=result.iloc[-1])
     r2 = sklearn.metrics.r2_score(series.values, regression)
@@ -179,17 +201,18 @@ def time_series_constant_regression(series, num_segments):
     return result, r2
 
 
-def infer_timezone(records):
-    """Determine the timezone of an activity from its GPS location data
+def infer_timezone(records: pd.DataFrame) -> str | None:
+    """Determine the timezone of an activity from its GPS location data.
 
     Finds the first valid latitude and longitude in the data and calculates the
     timezone for that GPS location.
 
     Args:
-        records: The activity data to process
+        records: Activity data to process.
 
     Returns:
-        Timezone string, or None if no timezone has been matched
+        Timezone name, or None if no valid latitude/longitude is available
+        or no timezone match is found.
     """
 
     try:
@@ -208,33 +231,37 @@ def infer_timezone(records):
     return tz_finder.timezone_at(lng=lng, lat=lat)
 
 
-def identify_inactive_periods(series, activity_threshold, min_duration):
-    """Identify periods where the value of a time series is not changing
+def identify_inactive_periods(
+    series: pd.Series,
+    activity_threshold: float,
+    min_duration: pd.Timedelta,
+) -> pd.Series:
+    """Identify periods where values in a time series are not changing.
 
-    Returns a Boolean Series identifying the periods where the velocity of
-    'series' (in units per second) remains below 'activity_threshold' for at
-    least a 'min_duration' span of time.
+    Returns a boolean mask identifying periods where the velocity of
+    ``series`` (in units per second) remains below ``activity_threshold`` for
+    at least ``min_duration``.
 
     Args:
-        series: Time-indexed Series.
+        series: Time-indexed values.
         activity_threshold: Velocity, in units per second, below which values
-          of 'series' are considered inactive.
-        min_duration: Timedelta object, should be greater than 1 second.
+            of ``series`` are considered inactive.
+        min_duration: Minimum inactivity span to flag.
 
     Returns:
-        Time-indexed Series of Boolean values.
+        Time-indexed boolean mask.
     """
 
-    # Calculate the derivative of the values of series, in units per second
+    # Calculate the derivative of series values, in units per second.
     # (this will be noisy but works well enough for our purposes)
     velocity = series.resample('s').interpolate().diff()
     below_threshold = velocity < activity_threshold
 
     # Split series into segments where velocity remains above or below
-    # threshold, then calculate the duration of each segment
+    # threshold, then calculate each segment duration.
     group_ids = below_threshold.diff().cumsum()
     grouped = velocity.groupby(group_ids, sort=False)
     durations = group_ids.map(grouped.count())
 
-    # Return True where series < activity_threshold for at least min_duration
+    # Return True where velocity stays below the threshold for min_duration.
     return (durations >= min_duration.total_seconds()) & below_threshold

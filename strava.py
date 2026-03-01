@@ -4,17 +4,23 @@ import functools
 import hashlib
 import multiprocessing
 import os
+from collections.abc import Callable
+from os import PathLike
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from . import utils
 
-
 CACHE_FNAME = 'bicycle_cache.csv'
 
 
-def process_one_activity(filename, path, cache):
+def process_one_activity(
+    filename: str | float,
+    path: str | PathLike[str],
+    cache: pd.DataFrame | None,
+) -> dict[str, Any]:
     """Run calculations on a single activity."""
 
     # Manual activities in Strava don't have a related activity file
@@ -50,7 +56,7 @@ def process_one_activity(filename, path, cache):
     # Load time-series data from the file
     records, _, _ = utils.parser.parse(full_path)
 
-    # Determine timezone using first valid lat,lng position in the file
+    # Determine timezone using the first valid latitude/longitude position.
     timezone = utils.infer_timezone(records)
     has_location = timezone is not None
     if timezone is None:
@@ -69,7 +75,7 @@ def process_one_activity(filename, path, cache):
             records['power']
             .resample('s')
             .ffill()
-            .rolling(20*60)
+            .rolling(20 * 60)
             .mean()
             .max()
         )
@@ -87,7 +93,11 @@ def process_one_activity(filename, path, cache):
     }
 
 
-def process_activities(files, path, cache_dir=None):
+def process_activities(
+    files: pd.Series,
+    path: str | PathLike[str],
+    cache_dir: str | PathLike[str] | None = None,
+) -> pd.DataFrame:
     """Run calculations on a set of activities.
 
     Calculates metrics on a set of activity files. Loading of activities in FIT
@@ -97,18 +107,21 @@ def process_activities(files, path, cache_dir=None):
 
     Args:
         files: List of activity files to process.
-        path: Path to directory containing the files.
-        cache_dir: Optional path to directory for cache of results.
+        path: Directory containing the files.
+        cache_dir: Optional directory for cache of results.
 
     Returns:
-        DataFrame of calculation results
+        Calculation results aligned to the index of ``files``.
     """
 
     # Load cached calculation results if available
     if cache_dir is not None:
         cache_path = os.path.join(cache_dir, CACHE_FNAME)
         try:
-            cache = pd.read_csv(cache_path).set_index('Filename')
+            cache = (
+                pd.read_csv(cache_path)
+                .set_index('Filename')
+            )
         except FileNotFoundError:
             cache = None
     else:
@@ -132,7 +145,11 @@ def process_activities(files, path, cache_dir=None):
     return calcs
 
 
-def load_strava_activities(path, home_tz, cache_dir=None):
+def load_strava_activities(
+    path: str | PathLike[str],
+    home_tz: Callable[[pd.Series], pd.Series | str] | str,
+    cache_dir: str | PathLike[str] | None = None,
+) -> pd.DataFrame:
     """Loads bicycling activity data from a Strava data export.
 
     In addition to loading Strava's activities.csv, calculates certain
@@ -142,13 +159,14 @@ def load_strava_activities(path, home_tz, cache_dir=None):
     the cache will be returned instead.
 
     Args:
-        path: Path to Strava export directory.
-        home_tz: Timezone to use as a default for activities on a trainer or
-          for activities where location data is not available.
-        cache_dir: Optional path to directory for cache of results.
+        path: Strava export directory.
+        home_tz: Fallback timezone used when location data are unavailable
+            (for example, trainer rides). Accepts either a single timezone
+            value or a callable that returns timezone values per activity.
+        cache_dir: Optional location for cache of results.
 
     Returns:
-        DataFrame of Strava bicycling activity data.
+        Processed Strava bicycling activity data.
     """
 
     # Load activities.csv and filter out any non-bicycle activities
@@ -158,8 +176,8 @@ def load_strava_activities(path, home_tz, cache_dir=None):
     )
 
     # Set the UTC date and time of the activity as the index
-    csv['Activity Date'] = (
-        pd.to_datetime(csv['Activity Date'], format='%b %d, %Y, %I:%M:%S %p')
+    csv['Activity Date'] = pd.to_datetime(
+        csv['Activity Date'], format='%b %d, %Y, %I:%M:%S %p'
     )
     csv.set_index('Activity Date', inplace=True)
 
@@ -167,9 +185,8 @@ def load_strava_activities(path, home_tz, cache_dir=None):
     calcs = process_activities(csv['Filename'], path, cache_dir)
 
     # Infer activities that were performed on a stationary trainer
-    calcs['Trainer'] = (
-        (csv['Activity Type'] == 'Virtual Ride')
-        | (~calcs['Has Location'] & ~csv['Filename'].isna())
+    calcs['Trainer'] = (csv['Activity Type'] == 'Virtual Ride') | (
+        ~calcs['Has Location'] & ~csv['Filename'].isna()
     )
 
     # Calculate the local date and time for each activity, subbing in a default
@@ -188,12 +205,12 @@ def load_strava_activities(path, home_tz, cache_dir=None):
     df['Bicycle'] = csv['Activity Gear']
     df['Trainer'] = calcs['Trainer']
     df['Commute'] = csv['Commute']
-    df['Distance'] = csv['Distance'] * 0.6213712 # Convert km to mi
-    df['Elevation'] = csv['Elevation Gain'] / 0.3048 # Convert m to ft
-    df['Elapsed Time'] = csv['Elapsed Time'] # In seconds
-    df['Moving Time'] = csv['Moving Time'] # In seconds
-    df['Max Heart Rate'] = calcs['Max Heart Rate'] # In beats per minute
-    df['Max Avg Power (20 min)'] = calcs['Max Avg Power'] # In watts
+    df['Distance'] = csv['Distance'] * 0.6213712  # Convert km to mi
+    df['Elevation'] = csv['Elevation Gain'] / 0.3048  # Convert m to ft
+    df['Elapsed Time'] = csv['Elapsed Time']  # In seconds
+    df['Moving Time'] = csv['Moving Time']  # In seconds
+    df['Max Heart Rate'] = calcs['Max Heart Rate']  # In beats per minute
+    df['Max Avg Power (20 min)'] = calcs['Max Avg Power']  # In watts
     df['Filename'] = csv['Filename']
 
     return df.set_index('Date').sort_index()
