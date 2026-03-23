@@ -4,15 +4,13 @@ import os
 from collections.abc import Iterable
 from os import PathLike
 
+import activity_parser
 import numpy as np
 import pandas as pd
+import pwlf
 import sklearn.linear_model
 import sklearn.metrics
-
-import pwlf
 import timezonefinder
-
-import activity_parser
 
 # Global objects that can be used throughout the fitness_analysis module
 parser = activity_parser.ActivityParser()
@@ -124,7 +122,8 @@ def _time_series_piecewise_linear_regression(
 
     fit_func = _fit_pwlf_breaks if breaks is not None else _fit_pwlf_segments
     fit_kwargs: dict[str, Iterable[pd.Timestamp] | int] = (
-        {'breaks': breaks} if breaks is not None
+        {'breaks': breaks}
+        if breaks is not None
         else {'num_segments': num_segments}
     )
     model, breaks_us, regression = fit_func(

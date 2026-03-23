@@ -134,8 +134,7 @@ def load_mnd_data(
     weight['Actual'] = (
         mnd_data['Measurements']
         .query('Measurement == "Body Weight"')
-        .set_index('Date')
-        ['Value']
+        .set_index('Date')['Value']
         .resample('D')
         .mean()
     )
@@ -164,44 +163,33 @@ def load_mnd_data(
     calories = pd.DataFrame()
     calories['Food'] = (
         mnd_data['Food']
-        .resample('D', on='Date & Time')
-        ['Calories, cals']
+        .resample('D', on='Date & Time')['Calories, cals']
         .sum(min_count=1)
     )
     calories['Exercise'] = (
-        mnd_data['Exercise']
-        .resample('D', on='Date & Time')
-        ['Calories']
-        .sum()
+        mnd_data['Exercise'].resample('D', on='Date & Time')['Calories'].sum()
     )
     calories['Exercise'] = calories['Exercise'].fillna(0)
-    calories['Baseline'] = (
-        eer_func(
-            weight['Smoothed']
-            .reindex(calories.index, method='ffill')
-        )
+    calories['Baseline'] = eer_func(
+        weight['Smoothed'].reindex(calories.index, method='ffill')
     )
     calories.index.rename('Date', inplace=True)
 
     # Create an 'adjusted food' column that fills in a rolling average for
     # days where no food was logged
-    calories['Food Adj'] = (
-        calories['Food'].fillna(
-            calories['Food']
-            .ewm(
-                halflife=calorie_halflife,
-                times=calories.index,
-                min_periods=calorie_min_periods,
-            )
-            .mean()
+    calories['Food Adj'] = calories['Food'].fillna(
+        calories['Food']
+        .ewm(
+            halflife=calorie_halflife,
+            times=calories.index,
+            min_periods=calorie_min_periods,
         )
+        .mean()
     )
 
     # Calculate net calorie balance for each day
     calories['Net Daily'] = (
-        calories['Food Adj']
-        - calories['Baseline']
-        - calories['Exercise']
+        calories['Food Adj'] - calories['Baseline'] - calories['Exercise']
     )
 
     # Calculate rolling average of net calorie balance
@@ -238,9 +226,7 @@ def load_mnd_data(
         .mean()
     )
     avg_consumption_observed = (
-        calories['Baseline']
-        + avg_exercise
-        + calories['Net Observed']
+        calories['Baseline'] + avg_exercise + calories['Net Observed']
     )
     calories['Accuracy'] = avg_food_recorded / avg_consumption_observed
 

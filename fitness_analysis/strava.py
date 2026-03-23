@@ -72,12 +72,7 @@ def process_one_activity(
     # Calculate maximum average power over 20 minutes during activity
     try:
         max_avg_power = (
-            records['power']
-            .resample('s')
-            .ffill()
-            .rolling(20 * 60)
-            .mean()
-            .max()
+            records['power'].resample('s').ffill().rolling(20 * 60).mean().max()
         )
     except KeyError:
         # No power data in file
@@ -118,10 +113,7 @@ def process_activities(
     if cache_dir is not None:
         cache_path = os.path.join(cache_dir, CACHE_FNAME)
         try:
-            cache = (
-                pd.read_csv(cache_path)
-                .set_index('Filename')
-            )
+            cache = pd.read_csv(cache_path).set_index('Filename')
         except FileNotFoundError:
             cache = None
     else:
@@ -172,9 +164,8 @@ def load_strava_activities(
     """
 
     # Load activities.csv and filter out any non-bicycle activities
-    csv = (
-        pd.read_csv(os.path.join(path, 'activities.csv'))
-        .query('`Activity Type` in ["Ride", "Virtual Ride"]')
+    csv = pd.read_csv(os.path.join(path, 'activities.csv')).query(
+        '`Activity Type` in ["Ride", "Virtual Ride"]'
     )
 
     # Set the UTC date and time of the activity as the index

@@ -16,14 +16,22 @@ Usage:
 >>> activities = fa.load_strava_activities('path/to/Strava/archive/', ...)
 """
 
-from .utils import time_series_piecewise_regression
-from .utils import time_series_piecewise_regression_with_breaks
-from .utils import time_series_constant_regression
-
-from .mynetdiary import eer_male
-from .mynetdiary import eer_female
-from .mynetdiary import load_mnd_data
-
-from .strava import load_strava_activities
-
 from .commute import load_commute_activities
+from .mynetdiary import eer_female, eer_male, load_mnd_data
+from .strava import load_strava_activities
+from .utils import (
+    time_series_constant_regression,
+    time_series_piecewise_regression,
+    time_series_piecewise_regression_with_breaks,
+)
+
+__all__ = [
+    'eer_female',
+    'eer_male',
+    'load_commute_activities',
+    'load_mnd_data',
+    'load_strava_activities',
+    'time_series_constant_regression',
+    'time_series_piecewise_regression',
+    'time_series_piecewise_regression_with_breaks',
+]

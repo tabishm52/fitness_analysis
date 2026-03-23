@@ -26,7 +26,7 @@ def process_one_commute(
         date = records.index[0].tz_convert(timezone).tz_localize(None)
 
     # Mark morning vs afternoon activities
-    if date.hour < 12:
+    if date.hour < 12:  # noqa: PLR2004
         direction = 'Morning'
     else:
         direction = 'Afternoon'
@@ -100,11 +100,9 @@ def split_and_process_commutes(
                 records['distance'], 2.5 / 3600.0, delta
             )
             active_periods = (
-                (~inactive_periods)
-                .reindex(records.index)
-                .fillna(True)
+                (~inactive_periods).reindex(records.index).fillna(True)
             )
-            records = records[active_periods]
+            records = records[active_periods]  # noqa: PLW2901
         except KeyError:
             pass
 
