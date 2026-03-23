@@ -27,39 +27,39 @@ def process_one_commute(
 
     # Mark morning vs afternoon activities
     if date.hour < 12:  # noqa: PLR2004
-        direction = 'Morning'
+        direction = "Morning"
     else:
-        direction = 'Afternoon'
+        direction = "Afternoon"
 
     # Elapsed time is the difference between the first and last timestamps
     elapsed_time = records.index[-1] - records.index[0]
 
     # Some activities (e.g., GPX files) do not contain 'distance' information
-    if 'distance' not in records.columns:
+    if "distance" not in records.columns:
         distance = np.nan
         moving_time = np.nan
 
     else:
         # Determine total distance of activity in miles
         distance = 0.6213712 * (
-            records['distance'].max() - records['distance'].min()
+            records["distance"].max() - records["distance"].min()
         )
 
         # Calculate moving time by excluding periods where speed is less than
         # 1 km per hour for at least 10 seconds
         inactive_periods = utils.identify_inactive_periods(
-            records['distance'], 1.0 / 3600.0, pd.Timedelta(10, 's')
+            records["distance"], 1.0 / 3600.0, pd.Timedelta(10, "s")
         )
-        moving_time = pd.Timedelta((~inactive_periods).sum(), 's')
+        moving_time = pd.Timedelta((~inactive_periods).sum(), "s")
 
     return {
-        'Date': date,
-        'Description': activity['Description'],
-        'Direction': direction,
-        'Distance': distance,
-        'Elapsed Time': elapsed_time,
-        'Moving Time': moving_time,
-        'Filename': activity['Filename'],
+        "Date": date,
+        "Description": activity["Description"],
+        "Direction": direction,
+        "Distance": distance,
+        "Elapsed Time": elapsed_time,
+        "Moving Time": moving_time,
+        "Filename": activity["Filename"],
     }
 
 
@@ -84,7 +84,7 @@ def split_and_process_commutes(
     """
 
     # Loading FIT files is slow, so parallelize reading of files
-    file_names = activities['Filename'][activities['Filename'].notna()]
+    file_names = activities["Filename"][activities["Filename"].notna()]
     file_paths = (os.path.join(path, f) for f in file_names)
     with multiprocessing.Pool() as p:
         data = p.map(utils.parser.parse, file_paths)
@@ -97,7 +97,7 @@ def split_and_process_commutes(
         # on all day rather than being paused between commute segments
         try:
             inactive_periods = utils.identify_inactive_periods(
-                records['distance'], 2.5 / 3600.0, delta
+                records["distance"], 2.5 / 3600.0, delta
             )
             active_periods = (
                 (~inactive_periods).reindex(records.index).fillna(True)
@@ -119,7 +119,7 @@ def split_and_process_commutes(
 def load_commute_activities(
     activities: pd.DataFrame,
     path: str | PathLike[str],
-    delta: pd.Timedelta = pd.Timedelta(90, 'm'),
+    delta: pd.Timedelta = pd.Timedelta(90, "m"),
 ) -> pd.DataFrame:
     """Calculate summary metrics for a set of commute activities.
 
@@ -140,19 +140,19 @@ def load_commute_activities(
         Summary metrics from commute activities indexed by local Date.
     """
 
-    commutes = activities.loc[activities['Commute']]
+    commutes = activities.loc[activities["Commute"]]
     results = split_and_process_commutes(commutes, path, delta)
     data = pd.DataFrame(results)
 
     if data.empty:
         columns = [
-            'Description',
-            'Direction',
-            'Distance',
-            'Elapsed Time',
-            'Moving Time',
-            'Filename',
+            "Description",
+            "Direction",
+            "Distance",
+            "Elapsed Time",
+            "Moving Time",
+            "Filename",
         ]
-        return pd.DataFrame(columns=columns, index=pd.Index([], name='Date'))
+        return pd.DataFrame(columns=columns, index=pd.Index([], name="Date"))
 
-    return data.set_index('Date')
+    return data.set_index("Date")

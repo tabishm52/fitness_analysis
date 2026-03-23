@@ -54,7 +54,7 @@ def eer_female(
     """
 
     # Calculate time series of age in fractional years
-    age = (weight.index - np.datetime64(dob)).astype('timedelta64[D]') / 365.25
+    age = (weight.index - np.datetime64(dob)).astype("timedelta64[D]") / 365.25
 
     # Perform female EER calculation per MyNetDiary
     # https://www.mynetdiary.com/supportArticle.do?articleId=328
@@ -78,11 +78,11 @@ def _ewm_min_periods_from_halflife(
     """
 
     if not 0 < coverage < 1:
-        raise ValueError('coverage must be in (0, 1)')
+        raise ValueError("coverage must be in (0, 1)")
 
-    halflife_days = pd.to_timedelta(halflife) / pd.Timedelta('1D')
+    halflife_days = pd.to_timedelta(halflife) / pd.Timedelta("1D")
     if halflife_days <= 0:
-        raise ValueError('halflife must be positive')
+        raise ValueError("halflife must be positive")
 
     daily_decay = 0.5 ** (1 / halflife_days)
     periods = int(np.ceil(np.log(1 - coverage) / np.log(daily_decay)))
@@ -93,8 +93,8 @@ def _ewm_min_periods_from_halflife(
 def load_mnd_data(
     path: str | PathLike[str],
     eer_func: Callable[[pd.Series], pd.Series],
-    weight_halflife: str = '3D',
-    calorie_halflife: str = '9D',
+    weight_halflife: str = "3D",
+    calorie_halflife: str = "9D",
     rate_window_days: int = 21,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Process weight and calorie data from a MyNetDiary data export.
@@ -131,15 +131,15 @@ def load_mnd_data(
 
     # Construct a table of actual & smoothed weights
     weight = pd.DataFrame()
-    weight['Actual'] = (
-        mnd_data['Measurements']
+    weight["Actual"] = (
+        mnd_data["Measurements"]
         .query('Measurement == "Body Weight"')
-        .set_index('Date')['Value']
-        .resample('D')
+        .set_index("Date")["Value"]
+        .resample("D")
         .mean()
     )
-    weight['Smoothed'] = (
-        weight['Actual']
+    weight["Smoothed"] = (
+        weight["Actual"]
         .ewm(
             halflife=weight_halflife,
             times=weight.index,
@@ -149,36 +149,36 @@ def load_mnd_data(
     )
 
     # Calculate weight gain/loss rate over time
-    weight['Rate'] = (
-        weight['Smoothed']
+    weight["Rate"] = (
+        weight["Smoothed"]
         .rolling(
             rate_window_days,
             min_periods=rate_min_periods,
             center=True,
         )
-        .apply(lambda x: utils.time_series_linear_rate(x.dropna(), 'W'))
+        .apply(lambda x: utils.time_series_linear_rate(x.dropna(), "W"))
     )
 
     # Construct a table of calorie information
     calories = pd.DataFrame()
-    calories['Food'] = (
-        mnd_data['Food']
-        .resample('D', on='Date & Time')['Calories, cals']
+    calories["Food"] = (
+        mnd_data["Food"]
+        .resample("D", on="Date & Time")["Calories, cals"]
         .sum(min_count=1)
     )
-    calories['Exercise'] = (
-        mnd_data['Exercise'].resample('D', on='Date & Time')['Calories'].sum()
+    calories["Exercise"] = (
+        mnd_data["Exercise"].resample("D", on="Date & Time")["Calories"].sum()
     )
-    calories['Exercise'] = calories['Exercise'].fillna(0)
-    calories['Baseline'] = eer_func(
-        weight['Smoothed'].reindex(calories.index, method='ffill')
+    calories["Exercise"] = calories["Exercise"].fillna(0)
+    calories["Baseline"] = eer_func(
+        weight["Smoothed"].reindex(calories.index, method="ffill")
     )
-    calories.index.rename('Date', inplace=True)
+    calories.index.rename("Date", inplace=True)
 
     # Create an 'adjusted food' column that fills in a rolling average for
     # days where no food was logged
-    calories['Food Adj'] = calories['Food'].fillna(
-        calories['Food']
+    calories["Food Adj"] = calories["Food"].fillna(
+        calories["Food"]
         .ewm(
             halflife=calorie_halflife,
             times=calories.index,
@@ -188,13 +188,13 @@ def load_mnd_data(
     )
 
     # Calculate net calorie balance for each day
-    calories['Net Daily'] = (
-        calories['Food Adj'] - calories['Baseline'] - calories['Exercise']
+    calories["Net Daily"] = (
+        calories["Food Adj"] - calories["Baseline"] - calories["Exercise"]
     )
 
     # Calculate rolling average of net calorie balance
-    calories['Net Recorded'] = (
-        calories['Net Daily']
+    calories["Net Recorded"] = (
+        calories["Net Daily"]
         .ewm(
             halflife=calorie_halflife,
             times=calories.index,
@@ -204,11 +204,11 @@ def load_mnd_data(
     )
 
     # Convert observed weight gain/loss in lbs/week to calories/day
-    calories['Net Observed'] = 500 * weight['Rate']
+    calories["Net Observed"] = 500 * weight["Rate"]
 
     # Calculate "accuracy" of calorie counting relative to actual weight loss
     avg_food_recorded = (
-        calories['Food Adj']
+        calories["Food Adj"]
         .ewm(
             halflife=calorie_halflife,
             times=calories.index,
@@ -217,7 +217,7 @@ def load_mnd_data(
         .mean()
     )
     avg_exercise = (
-        calories['Exercise']
+        calories["Exercise"]
         .ewm(
             halflife=calorie_halflife,
             times=calories.index,
@@ -226,8 +226,8 @@ def load_mnd_data(
         .mean()
     )
     avg_consumption_observed = (
-        calories['Baseline'] + avg_exercise + calories['Net Observed']
+        calories["Baseline"] + avg_exercise + calories["Net Observed"]
     )
-    calories['Accuracy'] = avg_food_recorded / avg_consumption_observed
+    calories["Accuracy"] = avg_food_recorded / avg_consumption_observed
 
     return weight, calories

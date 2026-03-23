@@ -26,12 +26,12 @@ from .utils import (
 )
 
 __all__ = [
-    'eer_female',
-    'eer_male',
-    'load_commute_activities',
-    'load_mnd_data',
-    'load_strava_activities',
-    'time_series_constant_regression',
-    'time_series_piecewise_regression',
-    'time_series_piecewise_regression_with_breaks',
+    "eer_female",
+    "eer_male",
+    "load_commute_activities",
+    "load_mnd_data",
+    "load_strava_activities",
+    "time_series_constant_regression",
+    "time_series_piecewise_regression",
+    "time_series_piecewise_regression_with_breaks",
 ]

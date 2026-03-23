@@ -37,7 +37,7 @@ def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
 
     for f in files:
         _, ext = os.path.splitext(f)
-        if ext.lower() not in ['.xls', '.xlsx']:
+        if ext.lower() not in [".xls", ".xlsx"]:
             continue
 
         excel = pd.read_excel(os.path.join(path, f), sheet_name=None)
@@ -59,13 +59,13 @@ def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
 def _to_time_us_uint64(index: pd.Index | Iterable[pd.Timestamp]) -> np.ndarray:
     """Convert datetime-like values to ``datetime64[us]`` as ``uint64``."""
 
-    return np.array(index).astype('datetime64[us]').astype(np.uint64)
+    return np.array(index).astype("datetime64[us]").astype(np.uint64)
 
 
 def _per_unit_us_factor(units: str) -> np.uint64:
     """Get conversion factor from 1 ``units`` to microseconds."""
 
-    return np.uint64(np.timedelta64(np.timedelta64(1, units), 'us'))
+    return np.uint64(np.timedelta64(np.timedelta64(1, units), "us"))
 
 
 def _fit_pwlf_segments(
@@ -118,13 +118,13 @@ def _time_series_piecewise_linear_regression(
 
     # Fit multi-segment piecewise linear regression.
     if (breaks is None) == (num_segments is None):
-        raise ValueError('Specify exactly one of breaks or num_segments')
+        raise ValueError("Specify exactly one of breaks or num_segments")
 
     fit_func = _fit_pwlf_breaks if breaks is not None else _fit_pwlf_segments
     fit_kwargs: dict[str, Iterable[pd.Timestamp] | int] = (
-        {'breaks': breaks}
+        {"breaks": breaks}
         if breaks is not None
-        else {'num_segments': num_segments}
+        else {"num_segments": num_segments}
     )
     model, breaks_us, regression = fit_func(
         series,
@@ -133,9 +133,9 @@ def _time_series_piecewise_linear_regression(
     )
 
     # Construct the DataFrame of regression results
-    result = pd.DataFrame(index=breaks_us.astype('datetime64[us]'))
-    result['Value'] = model.predict(breaks_us)
-    result['Rate'] = c * np.append(model.calc_slopes(), [np.nan])
+    result = pd.DataFrame(index=breaks_us.astype("datetime64[us]"))
+    result["Value"] = model.predict(breaks_us)
+    result["Rate"] = c * np.append(model.calc_slopes(), [np.nan])
     r2 = sklearn.metrics.r2_score(series.values, regression)
 
     return result, r2
@@ -250,7 +250,7 @@ def time_series_constant_regression(
     # Construct the Series of regression results
     result = pd.Series(
         model.predict(breakpoints),
-        index=breakpoints.astype('datetime64[us]'),
+        index=breakpoints.astype("datetime64[us]"),
     )
     result = result.shift(-1, fill_value=result.iloc[-1])
     r2 = sklearn.metrics.r2_score(series.values, regression)
@@ -273,7 +273,7 @@ def infer_timezone(records: pd.DataFrame) -> str | None:
     """
 
     try:
-        points = records[['latitude', 'longitude']]
+        points = records[["latitude", "longitude"]]
     except KeyError:
         return None
 
@@ -311,13 +311,13 @@ def identify_inactive_periods(
 
     # Calculate the derivative of series values, in units per second.
     # (this will be noisy but works well enough for our purposes)
-    velocity = series.resample('s').interpolate().diff()
+    velocity = series.resample("s").interpolate().diff()
     below_threshold = velocity < activity_threshold
 
     # Split series into segments where velocity remains above or below
     # threshold, then calculate each segment duration.
     group_ids = below_threshold.ne(below_threshold.shift()).cumsum()
-    durations = below_threshold.groupby(group_ids, sort=False).transform('size')
+    durations = below_threshold.groupby(group_ids, sort=False).transform("size")
 
     # Return True where velocity stays below the threshold for min_duration.
     return (durations >= min_duration.total_seconds()) & below_threshold
