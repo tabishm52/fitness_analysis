@@ -16,6 +16,9 @@ dependencies = [
     "activity-parser",
 ]
 
+[tool.uv.sources]
+activity-parser = { workspace = true }
+
 [tool.ruff]
 line-length = 80
 target-version = "py310"
