@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fitness-analysis"
+version = "0.1.0"
+description = "Analysis tools for fitness activity data from Strava and MyNetDiary."
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "pwlf",
+    "scikit-learn",
+    "timezonefinder",
+    "activity-parser",
+]
