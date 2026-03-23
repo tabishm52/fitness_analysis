@@ -149,7 +149,7 @@ def load_strava_activities(
     path: str | PathLike[str],
     home_tz: Callable[[pd.Series], pd.Series | str] | str,
     cache_dir: str | PathLike[str] | None = None,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Loads bicycling activity data from a Strava data export.
 
     In addition to loading Strava's activities.csv, calculates certain
@@ -166,7 +166,9 @@ def load_strava_activities(
         cache_dir: Optional location for cache of results.
 
     Returns:
-        Processed Strava bicycling activity data.
+        Tuple of (activities, weekly_sums) where activities is the processed
+        Strava bicycling activity data and weekly_sums is a DataFrame of
+        distance, elevation, and time metrics resampled to weekly totals.
     """
 
     # Load activities.csv and filter out any non-bicycle activities
@@ -213,4 +215,9 @@ def load_strava_activities(
     df['Max Avg Power (20 min)'] = calcs['Max Avg Power']  # In watts
     df['Filename'] = csv['Filename']
 
-    return df.set_index('Date').sort_index()
+    activities = df.set_index('Date').sort_index()
+
+    weekly_metrics = ['Distance', 'Elevation', 'Elapsed Time', 'Moving Time']
+    weekly_sums = activities[weekly_metrics].resample('W-SUN').sum()
+
+    return activities, weekly_sums
