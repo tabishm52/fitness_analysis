@@ -11,6 +11,8 @@ import pandas as pd
 
 from . import utils
 
+_NOON = 12
+
 
 def process_one_commute(
     activity: pd.Series,
@@ -26,7 +28,7 @@ def process_one_commute(
         date = records.index[0].tz_convert(timezone).tz_localize(None)
 
     # Mark morning vs afternoon activities
-    if date.hour < 12:  # noqa: PLR2004
+    if date.hour < _NOON:
         direction = "Morning"
     else:
         direction = "Afternoon"
@@ -92,19 +94,19 @@ def split_and_process_commutes(
     activity_rows = (row for _, row in activities.iterrows())
     commute_records = (records for records, _, _ in data)
 
-    for activity, records in zip(activity_rows, commute_records):
+    for activity, all_records in zip(activity_rows, commute_records):
         # Drop periods of inactivity, to cover the cases where the GPS was left
         # on all day rather than being paused between commute segments
         try:
             inactive_periods = utils.identify_inactive_periods(
-                records["distance"], 2.5 / 3600.0, delta
+                all_records["distance"], 2.5 / 3600.0, delta
             )
             active_periods = (
-                (~inactive_periods).reindex(records.index).fillna(True)
+                (~inactive_periods).reindex(all_records.index).fillna(True)
             )
-            records = records[active_periods]  # noqa: PLW2901
+            records = all_records[active_periods]
         except KeyError:
-            pass
+            records = all_records
 
         # Split records into separate groups wherever there is a difference
         # greater than 'delta' between the indices of two adjacent rows
