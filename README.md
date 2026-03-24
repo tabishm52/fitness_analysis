@@ -12,16 +12,16 @@ from www.mynetdiary.com.
 
 ## Installation
 
-First install [activity-parser](https://github.com/GITHUB_USER/activity-parser):
+First install [activity-parser](https://github.com/tabishm52/activity_parser):
 
 ```bash
-pip install git+https://github.com/GITHUB_USER/activity-parser.git
+pip install git+https://github.com/tabishm52/activity_parser.git
 ```
 
 Then install fitness-analysis:
 
 ```bash
-pip install git+https://github.com/GITHUB_USER/fitness-analysis.git
+pip install git+https://github.com/tabishm52/fitness_analysis.git
 ```
 
 ## Usage
