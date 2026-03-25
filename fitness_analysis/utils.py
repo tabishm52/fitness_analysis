@@ -71,13 +71,12 @@ def _per_unit_us_factor(units: str) -> np.uint64:
 def _fit_pwlf_segments(
     series: pd.Series,
     *,
-    degree: int,
     num_segments: int,
 ) -> tuple[pwlf.PiecewiseLinFit, np.ndarray, np.ndarray]:
     """Fit a pwlf model using a fixed number of segments."""
 
     x = _to_time_us_uint64(series.index)
-    model = pwlf.PiecewiseLinFit(x, series.values, degree=degree)
+    model = pwlf.PiecewiseLinFit(x, series.values)
     breakpoints = model.fit(num_segments)
     regression = model.predict(x)
 
@@ -87,16 +86,14 @@ def _fit_pwlf_segments(
 def _fit_pwlf_breaks(
     series: pd.Series,
     *,
-    degree: int,
     breaks: Iterable[pd.Timestamp],
 ) -> tuple[pwlf.PiecewiseLinFit, np.ndarray, np.ndarray]:
     """Fit a pwlf model using explicit breakpoints."""
 
     x = _to_time_us_uint64(series.index)
-    model = pwlf.PiecewiseLinFit(x, series.values, degree=degree)
+    model = pwlf.PiecewiseLinFit(x, series.values)
     breakpoints = _to_time_us_uint64(breaks)
     model.fit_with_breaks(breakpoints)
-
     regression = model.predict(x)
 
     return model, breakpoints, regression
@@ -128,7 +125,6 @@ def _time_series_piecewise_linear_regression(
     )
     model, breaks_us, regression = fit_func(
         series,
-        degree=1,
         **fit_kwargs,
     )
 
@@ -220,42 +216,6 @@ def time_series_linear_rate(series: pd.Series, units: str) -> float:
     c = _per_unit_us_factor(units)
 
     return c * model.coef_[0]
-
-
-def time_series_constant_regression(
-    series: pd.Series,
-    num_segments: int,
-) -> tuple[pd.Series, float]:
-    """Fit a segmented constant model to a time series.
-
-    Args:
-        series: Time-indexed values on which to perform regression.
-        num_segments: Number of segments for model.
-
-    Returns:
-        Tuple of (result, r2).
-
-        result: Time-indexed breakpoints with fitted constant value
-            at each breakpoint. Use result.resample().ffill() to plot.
-        r2: Calculated R^2 score of model fit.
-    """
-
-    # Do a multi-segment constant regression
-    model, breakpoints, regression = _fit_pwlf_segments(
-        series,
-        degree=0,
-        num_segments=num_segments,
-    )
-
-    # Construct the Series of regression results
-    result = pd.Series(
-        model.predict(breakpoints),
-        index=breakpoints.astype("datetime64[us]"),
-    )
-    result = result.shift(-1, fill_value=result.iloc[-1])
-    r2 = sklearn.metrics.r2_score(series.values, regression)
-
-    return result, r2
 
 
 def infer_timezone(records: pd.DataFrame) -> str | None:

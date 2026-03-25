@@ -4,7 +4,6 @@ from .commute import load_commute_activities
 from .mynetdiary import eer_female, eer_male, load_mnd_data
 from .strava import load_strava_activities
 from .utils import (
-    time_series_constant_regression,
     time_series_piecewise_regression,
     time_series_piecewise_regression_with_breaks,
 )
@@ -15,7 +14,6 @@ __all__ = [
     "load_commute_activities",
     "load_mnd_data",
     "load_strava_activities",
-    "time_series_constant_regression",
     "time_series_piecewise_regression",
     "time_series_piecewise_regression_with_breaks",
 ]
