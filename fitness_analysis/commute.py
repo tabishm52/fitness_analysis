@@ -55,13 +55,13 @@ def process_one_commute(
         moving_time = pd.Timedelta((~inactive_periods).sum(), "s")
 
     return {
-        "Date": date,
-        "Description": activity["Description"],
-        "Direction": direction,
-        "Distance": distance,
-        "Elapsed Time": elapsed_time,
-        "Moving Time": moving_time,
-        "Filename": activity["Filename"],
+        "date": date,
+        "description": activity["description"],
+        "direction": direction,
+        "distance": distance,
+        "elapsed_time": elapsed_time,
+        "moving_time": moving_time,
+        "filename": activity["filename"],
     }
 
 
@@ -86,7 +86,7 @@ def split_and_process_commutes(
     """
 
     # Loading FIT files is slow, so parallelize reading of files
-    file_names = activities["Filename"][activities["Filename"].notna()]
+    file_names = activities["filename"][activities["filename"].notna()]
     file_paths = (os.path.join(path, f) for f in file_names)
     with multiprocessing.Pool() as p:
         data = p.map(utils.parser.parse, file_paths)
@@ -139,22 +139,22 @@ def load_commute_activities(
         delta: Size of time gap at which to split activities.
 
     Returns:
-        Summary metrics from commute activities indexed by local Date.
+        Summary metrics from commute activities indexed by local date.
     """
 
-    commutes = activities.loc[activities["Commute"]]
+    commutes = activities.loc[activities["commute"]]
     results = split_and_process_commutes(commutes, path, delta)
     data = pd.DataFrame(results)
 
     if data.empty:
         columns = [
-            "Description",
-            "Direction",
-            "Distance",
-            "Elapsed Time",
-            "Moving Time",
-            "Filename",
+            "description",
+            "direction",
+            "distance",
+            "elapsed_time",
+            "moving_time",
+            "filename",
         ]
-        return pd.DataFrame(columns=columns, index=pd.Index([], name="Date"))
+        return pd.DataFrame(columns=columns, index=pd.Index([], name="date"))
 
-    return data.set_index("Date")
+    return data.set_index("date")

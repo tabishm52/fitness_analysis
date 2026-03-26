@@ -130,8 +130,8 @@ def _time_series_piecewise_linear_regression(
 
     # Construct the DataFrame of regression results
     result = pd.DataFrame(index=breaks_us.astype("datetime64[us]"))
-    result["Value"] = model.predict(breaks_us)
-    result["Rate"] = c * np.append(model.calc_slopes(), [np.nan])
+    result["value"] = model.predict(breaks_us)
+    result["rate"] = c * np.append(model.calc_slopes(), [np.nan])
     r2 = sklearn.metrics.r2_score(series.values, regression)
 
     return result, r2

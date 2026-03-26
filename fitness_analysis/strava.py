@@ -26,12 +26,12 @@ def process_one_activity(
     # Manual activities in Strava don't have a related activity file
     if pd.isna(filename):
         return {
-            "Filename": filename,
-            "Hash": np.nan,
-            "Timezone": np.nan,
-            "Has Location": False,
-            "Max Heart Rate": np.nan,
-            "Max Avg Power": np.nan,
+            "filename": filename,
+            "hash": np.nan,
+            "timezone": np.nan,
+            "has_location": False,
+            "max_heart_rate": np.nan,
+            "max_avg_power": np.nan,
         }
 
     # Calculate hash of file - to make sure cached results are valid
@@ -41,14 +41,14 @@ def process_one_activity(
 
     # Short-circuit and return cached results if available
     try:
-        if cache is not None and cache.at[filename, "Hash"] == hash_val:
+        if cache is not None and cache.at[filename, "hash"] == hash_val:
             return {
-                "Filename": filename,
-                "Hash": hash_val,
-                "Timezone": cache.at[filename, "Timezone"],
-                "Has Location": cache.at[filename, "Has Location"],
-                "Max Heart Rate": cache.at[filename, "Max Heart Rate"],
-                "Max Avg Power": cache.at[filename, "Max Avg Power"],
+                "filename": filename,
+                "hash": hash_val,
+                "timezone": cache.at[filename, "timezone"],
+                "has_location": cache.at[filename, "has_location"],
+                "max_heart_rate": cache.at[filename, "max_heart_rate"],
+                "max_avg_power": cache.at[filename, "max_avg_power"],
             }
     except KeyError:
         pass
@@ -79,12 +79,12 @@ def process_one_activity(
         max_avg_power = np.nan
 
     return {
-        "Filename": filename,
-        "Hash": hash_val,
-        "Timezone": timezone,
-        "Has Location": has_location,
-        "Max Heart Rate": max_hr,
-        "Max Avg Power": max_avg_power,
+        "filename": filename,
+        "hash": hash_val,
+        "timezone": timezone,
+        "has_location": has_location,
+        "max_heart_rate": max_hr,
+        "max_avg_power": max_avg_power,
     }
 
 
@@ -113,7 +113,7 @@ def process_activities(
     if cache_dir is not None:
         cache_path = os.path.join(cache_dir, CACHE_FNAME)
         try:
-            cache = pd.read_csv(cache_path).set_index("Filename")
+            cache = pd.read_csv(cache_path).set_index("filename")
         except FileNotFoundError:
             cache = None
     else:
@@ -127,9 +127,9 @@ def process_activities(
     if cache_dir is not None:
         # Add new results to cache, deduplicate and save
         if cache is not None:
-            new_cache = pd.concat([calcs.set_index("Filename"), cache])
+            new_cache = pd.concat([calcs.set_index("filename"), cache])
         else:
-            new_cache = calcs.set_index("Filename")
+            new_cache = calcs.set_index("filename")
         new_cache = new_cache[~new_cache.index.isna()]
         new_cache = new_cache[~new_cache.index.duplicated()]
         new_cache.sort_index().to_csv(cache_path)
@@ -178,37 +178,37 @@ def load_strava_activities(
     calcs = process_activities(csv["Filename"], path, cache_dir)
 
     # Infer activities that were performed on a stationary trainer
-    calcs["Trainer"] = (csv["Activity Type"] == "Virtual Ride") | (
-        ~calcs["Has Location"] & ~csv["Filename"].isna()
+    calcs["trainer"] = (csv["Activity Type"] == "Virtual Ride") | (
+        ~calcs["has_location"] & ~csv["Filename"].isna()
     )
 
     # Calculate the local date and time for each activity, subbing in a default
     # timezone for trainer rides or if timezone info is not available
-    mask = calcs["Trainer"] | calcs["Timezone"].isna()
-    calcs["Timezone Used"] = calcs["Timezone"].mask(mask, home_tz)
-    calcs["Local Date"] = [
+    mask = calcs["trainer"] | calcs["timezone"].isna()
+    calcs["timezone_used"] = calcs["timezone"].mask(mask, home_tz)
+    calcs["local_date"] = [
         date.tz_localize("UTC").tz_convert(tz).tz_localize(None)
-        for date, tz in zip(calcs.index, calcs["Timezone Used"])
+        for date, tz in zip(calcs.index, calcs["timezone_used"])
     ]
 
     # Construct the return DataFrame, converting units as appropriate
     df = pd.DataFrame()
-    df["Date"] = calcs["Local Date"]
-    df["Description"] = csv["Activity Name"]
-    df["Bicycle"] = csv["Activity Gear"]
-    df["Trainer"] = calcs["Trainer"]
-    df["Commute"] = csv["Commute"]
-    df["Distance"] = csv["Distance"] * 0.6213712  # Convert km to mi
-    df["Elevation"] = csv["Elevation Gain"] / 0.3048  # Convert m to ft
-    df["Elapsed Time"] = csv["Elapsed Time"]  # In seconds
-    df["Moving Time"] = csv["Moving Time"]  # In seconds
-    df["Max Heart Rate"] = calcs["Max Heart Rate"]  # In beats per minute
-    df["Max Avg Power (20 min)"] = calcs["Max Avg Power"]  # In watts
-    df["Filename"] = csv["Filename"]
+    df["date"] = calcs["local_date"]
+    df["description"] = csv["Activity Name"]
+    df["bicycle"] = csv["Activity Gear"]
+    df["trainer"] = calcs["trainer"]
+    df["commute"] = csv["Commute"]
+    df["distance"] = csv["Distance"] * 0.6213712  # Convert km to mi
+    df["elevation"] = csv["Elevation Gain"] / 0.3048  # Convert m to ft
+    df["elapsed_time"] = csv["Elapsed Time"]  # In seconds
+    df["moving_time"] = csv["Moving Time"]  # In seconds
+    df["max_heart_rate"] = calcs["max_heart_rate"]  # In beats per minute
+    df["estimated_ftp"] = calcs["max_avg_power"]  # In watts
+    df["filename"] = csv["Filename"]
 
-    activities = df.set_index("Date").sort_index()
+    activities = df.set_index("date").sort_index()
 
-    weekly_metrics = ["Distance", "Elevation", "Elapsed Time", "Moving Time"]
+    weekly_metrics = ["distance", "elevation", "elapsed_time", "moving_time"]
     weekly_sums = activities[weekly_metrics].resample("W-SUN").sum()
 
     return activities, weekly_sums
