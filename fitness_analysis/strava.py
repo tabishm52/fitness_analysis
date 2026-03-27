@@ -63,16 +63,16 @@ def process_one_activity(
     if timezone is None:
         timezone = np.nan
 
-    try:
+    if "heart_rate" in records.columns:
         max_hr = records["heart_rate"].max()
-    except KeyError:
+    else:
         max_hr = np.nan
 
-    try:
+    if "power" in records.columns:
         estimated_ftp = (
             records["power"].resample("s").ffill().rolling(20 * 60).mean().max()
         )
-    except KeyError:
+    else:
         estimated_ftp = np.nan
 
     return {
