@@ -131,13 +131,11 @@ def load_mnd_data(
 
     # Construct a table of actual & smoothed weights
     weight = pd.DataFrame()
-    weight["actual"] = (
-        mnd_data["Measurements"]
-        .query('Measurement == "Body Weight"')
-        .set_index("Date")["Value"]
-        .resample("D")
-        .mean()
-    )
+    bw = mnd_data["Measurements"].query('Measurement == "Body Weight"')
+    unexpected_units = set(bw["Unit"].str.lower().unique()) - {"lbs"}
+    if unexpected_units:
+        raise ValueError(f"Unexpected body weight units: {unexpected_units}")
+    weight["actual"] = bw.set_index("Date")["Value"].resample("D").mean()
     weight["smoothed"] = (
         weight["actual"]
         .ewm(
@@ -204,7 +202,7 @@ def load_mnd_data(
     )
 
     # Convert observed weight gain/loss in lbs/week to calories/day
-    calories["net_observed"] = 500 * weight["rate"]
+    calories["net_observed"] = utils.CAL_PER_LB_WEEK * weight["rate"]
 
     # Calculate "accuracy" of calorie counting relative to actual weight loss
     avg_food_recorded = (

@@ -198,8 +198,8 @@ def load_strava_activities(
     df["bicycle"] = csv["Activity Gear"]
     df["trainer"] = calcs["trainer"]
     df["commute"] = csv["Commute"]
-    df["distance"] = csv["Distance"] * 0.6213712  # Convert km to mi
-    df["elevation"] = csv["Elevation Gain"] / 0.3048  # Convert m to ft
+    df["distance"] = csv["Distance"] * utils.KM_TO_MI
+    df["elevation"] = csv["Elevation Gain"] * utils.M_TO_FT
     df["elapsed_time"] = csv["Elapsed Time"]  # In seconds
     df["moving_time"] = csv["Moving Time"]  # In seconds
     df["max_heart_rate"] = calcs["max_heart_rate"]  # In beats per minute

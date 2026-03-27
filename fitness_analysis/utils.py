@@ -7,10 +7,23 @@ from os import PathLike
 import activity_parser
 import numpy as np
 import pandas as pd
+import pint
 import pwlf
 import sklearn.linear_model
 import sklearn.metrics
 import timezonefinder
+
+# Unit conversion factors derived from pint
+_ureg = pint.UnitRegistry()
+
+KM_TO_MI = _ureg.Quantity(1, "km").to("mile").magnitude
+M_TO_FT = _ureg.Quantity(1, "m").to("ft").magnitude
+LBS_TO_KG = _ureg.Quantity(1, "lb").to("kg").magnitude
+
+# Physiological approximation: 1 lb of body fat ≈ 3500 kcal
+# Divided by 7 days/week → kcal/day per lb/week of weight change
+_FAT_KCAL_PER_LB = 3500
+CAL_PER_LB_WEEK = _FAT_KCAL_PER_LB / 7
 
 # Global objects that can be used throughout the fitness_analysis module
 parser = activity_parser.ActivityParser()

@@ -43,7 +43,7 @@ def process_one_commute(
 
     else:
         # Determine total distance of activity in miles
-        distance = 0.6213712 * (
+        distance = utils.KM_TO_MI * (
             records["distance"].max() - records["distance"].min()
         )
 
