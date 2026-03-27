@@ -3,9 +3,9 @@
 import functools
 import hashlib
 import multiprocessing
-import os
 from collections.abc import Callable
 from os import PathLike
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -35,7 +35,7 @@ def process_one_activity(
         }
 
     # Calculate hash of file - to make sure cached results are valid
-    full_path = os.path.join(path, filename)
+    full_path = Path(path) / filename
     with open(full_path, "rb") as f:
         hash_val = hashlib.blake2b(f.read(), digest_size=8).hexdigest()
 
@@ -111,7 +111,7 @@ def process_activities(
 
     # Load cached calculation results if available
     if cache_dir is not None:
-        cache_path = os.path.join(cache_dir, CACHE_FNAME)
+        cache_path = Path(cache_dir) / CACHE_FNAME
         try:
             cache = pd.read_csv(cache_path).set_index("filename")
         except FileNotFoundError:
@@ -164,7 +164,7 @@ def load_strava_activities(
     """
 
     # Load activities.csv and filter out any non-bicycle activities
-    csv = pd.read_csv(os.path.join(path, "activities.csv")).query(
+    csv = pd.read_csv(Path(path) / "activities.csv").query(
         '`Activity Type` in ["Ride", "Virtual Ride"]'
     )
 

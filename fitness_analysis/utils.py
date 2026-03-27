@@ -1,8 +1,8 @@
 """Common utility functions for fitness_analysis module."""
 
-import os
 from collections.abc import Iterable
 from os import PathLike
+from pathlib import Path
 
 import activity_parser
 import numpy as np
@@ -45,15 +45,13 @@ def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
     """
 
     data_parts: dict[str, list[pd.DataFrame]] = {}
-    files = os.listdir(path)
-    files.sort()
+    files = sorted(Path(path).iterdir())
 
     for f in files:
-        _, ext = os.path.splitext(f)
-        if ext.lower() not in [".xls", ".xlsx"]:
+        if f.suffix.lower() not in [".xls", ".xlsx"]:
             continue
 
-        excel = pd.read_excel(os.path.join(path, f), sheet_name=None)
+        excel = pd.read_excel(f, sheet_name=None)
         for sheet_name, sheet_data in excel.items():
             if sheet_data.empty:
                 continue

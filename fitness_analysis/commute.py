@@ -1,9 +1,9 @@
 """Functions for processing Strava bicycling commutes."""
 
 import multiprocessing
-import os
 from collections.abc import Iterator
 from os import PathLike
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -87,7 +87,7 @@ def split_and_process_commutes(
 
     # Loading FIT files is slow, so parallelize reading of files
     file_names = activities["filename"][activities["filename"].notna()]
-    file_paths = (os.path.join(path, f) for f in file_names)
+    file_paths = (Path(path) / f for f in file_names)
     with multiprocessing.Pool() as p:
         data = p.map(utils.parser.parse, file_paths)
 
