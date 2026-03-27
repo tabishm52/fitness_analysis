@@ -1,7 +1,5 @@
 """Functions for processing Strava bicycling activities."""
 
-import functools
-import hashlib
 import multiprocessing
 from collections.abc import Callable
 from os import PathLike
@@ -16,75 +14,71 @@ from . import utils
 CACHE_FNAME = "bicycle_cache.csv"
 
 
-def process_one_activity(
+def check_cache(
     filename: str | float,
-    path: str | PathLike[str],
     cache: pd.DataFrame | None,
-) -> dict[str, Any]:
-    """Run calculations on a single activity."""
+) -> dict[str, Any] | None:
+    """Check whether a single activity is in the cache.
 
-    # Manual activities in Strava don't have a related activity file
+    No validation is performed — activity files are assumed immutable after
+    Strava export. Returns the cached result dict on a hit, or None on a miss.
+    NaN filenames (activities with no file) always return a result immediately.
+    """
+
     if pd.isna(filename):
         return {
             "filename": filename,
-            "hash": np.nan,
             "timezone": np.nan,
             "has_location": False,
             "max_heart_rate": np.nan,
-            "max_avg_power": np.nan,
+            "estimated_ftp": np.nan,
         }
 
-    # Calculate hash of file - to make sure cached results are valid
+    if cache is not None and filename in cache.index:
+        cached = cache.loc[filename]
+        return {
+            "filename": filename,
+            "timezone": cached["timezone"],
+            "has_location": cached["has_location"],
+            "max_heart_rate": cached["max_heart_rate"],
+            "estimated_ftp": cached["estimated_ftp"],
+        }
+
+    return None
+
+
+def process_one_activity(
+    filename: str | float,
+    path: str | PathLike[str],
+) -> dict[str, Any]:
+    """Parse a single activity file and compute metrics."""
+
     full_path = Path(path) / filename
-    with open(full_path, "rb") as f:
-        hash_val = hashlib.blake2b(f.read(), digest_size=8).hexdigest()
-
-    # Short-circuit and return cached results if available
-    try:
-        if cache is not None and cache.at[filename, "hash"] == hash_val:
-            return {
-                "filename": filename,
-                "hash": hash_val,
-                "timezone": cache.at[filename, "timezone"],
-                "has_location": cache.at[filename, "has_location"],
-                "max_heart_rate": cache.at[filename, "max_heart_rate"],
-                "max_avg_power": cache.at[filename, "max_avg_power"],
-            }
-    except KeyError:
-        pass
-
-    # Load time-series data from the file
     records, _, _ = utils.parser.parse(full_path)
 
-    # Determine timezone using the first valid latitude/longitude position.
     timezone = utils.infer_timezone(records)
     has_location = timezone is not None
     if timezone is None:
         timezone = np.nan
 
-    # Calculate maximum heart rate observed during activity
     try:
         max_hr = records["heart_rate"].max()
     except KeyError:
-        # No heart rate data in file
         max_hr = np.nan
 
-    # Calculate maximum average power over 20 minutes during activity
     try:
-        max_avg_power = (
+        estimated_ftp = (
             records["power"].resample("s").ffill().rolling(20 * 60).mean().max()
         )
     except KeyError:
-        # No power data in file
-        max_avg_power = np.nan
+        estimated_ftp = np.nan
 
     return {
         "filename": filename,
-        "hash": hash_val,
         "timezone": timezone,
         "has_location": has_location,
         "max_heart_rate": max_hr,
-        "max_avg_power": max_avg_power,
+        "estimated_ftp": estimated_ftp,
     }
 
 
@@ -110,21 +104,30 @@ def process_activities(
     """
 
     # Load cached calculation results if available
-    if cache_dir is not None:
-        cache_path = Path(cache_dir) / CACHE_FNAME
-        try:
-            cache = pd.read_csv(cache_path).set_index("filename")
-        except FileNotFoundError:
-            cache = None
-    else:
-        cache = None
+    cache_path = Path(cache_dir) / CACHE_FNAME if cache_dir else None
+    cache = None
+    if cache_path and cache_path.exists():
+        cache = pd.read_csv(cache_path).set_index("filename")
 
-    # Run calculations on all activity files, leveraging cached results
-    processor = functools.partial(process_one_activity, path=path, cache=cache)
-    with multiprocessing.Pool() as p:
-        calcs = pd.DataFrame(p.map(processor, files), index=files.index)
+    # Collect results for cache hits and a list of misses to parse in parallel.
+    results = [check_cache(f, cache) for f in files]
+    misses = [f for f, r in zip(files, results) if r is None]
 
-    if cache_dir is not None:
+    if misses:
+        args = ((f, path) for f in misses)
+        if len(misses) > multiprocessing.cpu_count():
+            with multiprocessing.Pool() as p:
+                parsed = p.starmap(process_one_activity, args)
+        else:
+            parsed = (process_one_activity(*a) for a in args)
+        miss_map = {r["filename"]: r for r in parsed}
+        results = (
+            r if r is not None else miss_map[f] for f, r in zip(files, results)
+        )
+
+    calcs = pd.DataFrame(results, index=files.index)
+
+    if cache_path is not None:
         # Add new results to cache, deduplicate and save
         if cache is not None:
             new_cache = pd.concat([calcs.set_index("filename"), cache])
@@ -203,7 +206,7 @@ def load_strava_activities(
     df["elapsed_time"] = csv["Elapsed Time"]  # In seconds
     df["moving_time"] = csv["Moving Time"]  # In seconds
     df["max_heart_rate"] = calcs["max_heart_rate"]  # In beats per minute
-    df["estimated_ftp"] = calcs["max_avg_power"]  # In watts
+    df["estimated_ftp"] = calcs["estimated_ftp"]  # In watts
     df["filename"] = csv["Filename"]
 
     activities = df.set_index("date").sort_index()
