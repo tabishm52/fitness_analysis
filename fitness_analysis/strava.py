@@ -11,6 +11,7 @@ import pandas as pd
 
 from . import utils
 
+ACTIVITIES_FNAME = "activities.csv"
 CACHE_FNAME = "bicycle_cache.csv"
 
 
@@ -50,11 +51,12 @@ def check_cache(
 def process_one_activity(
     filename: str | float,
     path: str | PathLike[str],
+    cache_dir: str | PathLike[str] | None = None,
 ) -> dict[str, Any]:
     """Parse a single activity file and compute metrics."""
 
     full_path = Path(path) / filename
-    records, _, _ = utils.parser.parse(full_path)
+    records = utils.parse_cached(full_path, cache_dir)
 
     timezone = utils.infer_timezone(records)
     has_location = timezone is not None
@@ -114,7 +116,7 @@ def process_activities(
     misses = [f for f, r in zip(files, results) if r is None]
 
     if misses:
-        args = ((f, path) for f in misses)
+        args = ((f, path, cache_dir) for f in misses)
         if len(misses) > multiprocessing.cpu_count():
             with multiprocessing.Pool() as p:
                 parsed = p.starmap(process_one_activity, args)
@@ -167,7 +169,7 @@ def load_strava_activities(
     """
 
     # Load activities.csv and filter out any non-bicycle activities
-    csv = pd.read_csv(Path(path) / "activities.csv").query(
+    csv = pd.read_csv(Path(path) / ACTIVITIES_FNAME).query(
         '`Activity Type` in ["Ride", "Virtual Ride"]'
     )
 

@@ -11,6 +11,7 @@ dependencies = [
     "numpy",
     "pandas",
     "pint",
+    "pyarrow",
     "pwlf",
     "scikit-learn",
     "timezonefinder",

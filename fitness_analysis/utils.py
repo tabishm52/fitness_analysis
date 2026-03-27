@@ -1,5 +1,6 @@
 """Common utility functions for fitness_analysis module."""
 
+import multiprocessing
 from collections.abc import Iterable
 from os import PathLike
 from pathlib import Path
@@ -24,6 +25,8 @@ LBS_TO_KG = _ureg.Quantity(1, "lb").to("kg").magnitude
 # Divided by 7 days/week → kcal/day per lb/week of weight change
 _FAT_KCAL_PER_LB = 3500
 CAL_PER_LB_WEEK = _FAT_KCAL_PER_LB / 7
+
+RECORDS_CACHE_DIR = "activity_records"
 
 # Global objects that can be used throughout the fitness_analysis module
 parser = activity_parser.ActivityParser()
@@ -292,3 +295,69 @@ def identify_inactive_periods(
 
     # Return True where velocity stays below the threshold for min_duration.
     return (durations >= min_duration.total_seconds()) & below_threshold
+
+
+def parse_cached(
+    path: str | PathLike[str],
+    cache_dir: str | PathLike[str] | None = None,
+) -> pd.DataFrame:
+    """Parse a FIT/TCX/GPX file, using a Parquet cache when available.
+
+    Worker-safe: picklable and suitable for use inside multiprocessing pools.
+
+    The cache key is the filename only — activity files are assumed immutable
+    after Strava export. To invalidate, delete the cache subdirectory.
+
+    Args:
+        path: Activity file to parse.
+        cache_dir: Optional cache directory.
+
+    Returns:
+        Parsed records.
+    """
+
+    if cache_dir is None:
+        records, _, _ = parser.parse(path)
+        return records
+
+    parquet_path = (
+        Path(cache_dir) / RECORDS_CACHE_DIR / (Path(path).name + ".parquet")
+    )
+    if parquet_path.exists():
+        return pd.read_parquet(parquet_path)
+
+    records, _, _ = parser.parse(path)
+    parquet_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Coerce object-dtype columns to string — mixed-type columns cannot be
+    # serialized by pyarrow without a consistent type.
+    obj_cols = records.select_dtypes(include="object").columns
+    records.astype({col: "string" for col in obj_cols}).to_parquet(parquet_path)
+
+    return records
+
+
+def load_activity_records(
+    files: pd.Series,
+    path: str | PathLike[str],
+    cache_dir: str | PathLike[str] | None = None,
+) -> list[pd.DataFrame]:
+    """Load parsed records for a set of activity files.
+
+    Parses each file using a Parquet cache when available. Parsing is
+    parallelized across a multiprocessing pool.
+
+    Args:
+        files: Activity filenames (relative to ``path``).
+        path: Directory containing the activity files.
+        cache_dir: Optional cache directory.
+
+    Returns:
+        Parsed records, one per file, in the same order as ``files``.
+    """
+
+    args = ((Path(path) / f, cache_dir) for f in files)
+    if len(files) > multiprocessing.cpu_count():
+        with multiprocessing.Pool() as p:
+            return p.starmap(parse_cached, args)
+    return [parse_cached(*a) for a in args]

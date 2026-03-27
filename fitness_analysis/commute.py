@@ -1,9 +1,7 @@
 """Functions for processing Strava bicycling commutes."""
 
-import multiprocessing
 from collections.abc import Iterator
 from os import PathLike
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -68,6 +66,7 @@ def process_one_commute(
 def split_and_process_commutes(
     activities: pd.DataFrame,
     path: str | PathLike[str],
+    cache_dir: str | PathLike[str] | None,
     delta: pd.Timedelta,
 ) -> Iterator[dict[str, Any]]:
     """Splits activities and yields summary metrics on each split.
@@ -79,6 +78,7 @@ def split_and_process_commutes(
     Args:
         activities: Activity files to load and process.
         path: Strava export directory.
+        cache_dir: Optional cache directory for parsed activity records.
         delta: Size of time gap at which to split activities.
 
     Yields:
@@ -87,14 +87,11 @@ def split_and_process_commutes(
 
     # Loading FIT files is slow, so parallelize reading of files
     file_names = activities["filename"][activities["filename"].notna()]
-    file_paths = (Path(path) / f for f in file_names)
-    with multiprocessing.Pool() as p:
-        data = p.map(utils.parser.parse, file_paths)
+    records_list = utils.load_activity_records(file_names, path, cache_dir)
 
     activity_rows = (row for _, row in activities.iterrows())
-    commute_records = (records for records, _, _ in data)
 
-    for activity, all_records in zip(activity_rows, commute_records):
+    for activity, all_records in zip(activity_rows, records_list):
         # Drop periods of inactivity, to cover the cases where the GPS was left
         # on all day rather than being paused between commute segments
         try:
@@ -121,6 +118,7 @@ def split_and_process_commutes(
 def load_commute_activities(
     activities: pd.DataFrame,
     path: str | PathLike[str],
+    cache_dir: str | PathLike[str] | None = None,
     delta: pd.Timedelta = pd.Timedelta(90, "m"),
 ) -> pd.DataFrame:
     """Calculate summary metrics for a set of commute activities.
@@ -136,6 +134,7 @@ def load_commute_activities(
     Args:
         activities: Activity files to load and process.
         path: Strava export directory.
+        cache_dir: Optional cache directory for parsed activity records.
         delta: Size of time gap at which to split activities.
 
     Returns:
@@ -143,7 +142,7 @@ def load_commute_activities(
     """
 
     commutes = activities.loc[activities["commute"]]
-    results = split_and_process_commutes(commutes, path, delta)
+    results = split_and_process_commutes(commutes, path, cache_dir, delta)
     data = pd.DataFrame(results)
 
     if data.empty:
