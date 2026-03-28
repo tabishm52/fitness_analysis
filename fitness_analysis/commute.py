@@ -7,48 +7,47 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from . import utils
+from . import records, utils
 
-_NOON = 12
+NOON = 12
 
 
 def process_one_commute(
     activity: pd.Series,
-    records: pd.DataFrame,
+    activity_records: pd.DataFrame,
 ) -> dict[str, Any]:
     """Calculate summary metrics for one commute activity."""
 
     # Compute the date of the activity in local time
-    timezone = utils.infer_timezone(records)
+    timezone = utils.infer_timezone(activity_records)
     if timezone is None:
-        date = records.index[0].tz_localize(None)
+        date = activity_records.index[0].tz_localize(None)
     else:
-        date = records.index[0].tz_convert(timezone).tz_localize(None)
+        date = activity_records.index[0].tz_convert(timezone).tz_localize(None)
 
     # Mark morning vs afternoon activities
-    if date.hour < _NOON:
+    if date.hour < NOON:
         direction = "Morning"
     else:
         direction = "Afternoon"
 
     # Elapsed time is the difference between the first and last timestamps
-    elapsed_time = records.index[-1] - records.index[0]
+    elapsed_time = activity_records.index[-1] - activity_records.index[0]
 
     # Some activities (e.g., GPX files) do not contain 'distance' information
-    if "distance" not in records.columns:
+    if "distance" not in activity_records.columns:
         distance = np.nan
         moving_time = np.nan
 
     else:
         # Determine total distance of activity in miles
-        distance = utils.KM_TO_MI * (
-            records["distance"].max() - records["distance"].min()
-        )
+        dist = activity_records["distance"]
+        distance = utils.KM_TO_MI * (dist.max() - dist.min())
 
         # Calculate moving time by excluding periods where speed is less than
         # 1 km per hour for at least 10 seconds
         inactive_periods = utils.identify_inactive_periods(
-            records["distance"], 1.0 / 3600.0, pd.Timedelta(10, "s")
+            activity_records["distance"], 1.0 / 3600.0, pd.Timedelta(10, "s")
         )
         moving_time = pd.Timedelta((~inactive_periods).sum(), "s")
 
@@ -87,7 +86,7 @@ def split_and_process_commutes(
 
     # Loading FIT files is slow, so parallelize reading of files
     file_names = activities["filename"][activities["filename"].notna()]
-    records_list = utils.load_activity_records(file_names, path, cache_dir)
+    records_list = records.load_activity_records(file_names, path, cache_dir)
 
     activity_rows = (row for _, row in activities.iterrows())
 
@@ -101,14 +100,14 @@ def split_and_process_commutes(
             active_periods = (
                 (~inactive_periods).reindex(all_records.index).fillna(True)
             )
-            records = all_records[active_periods]
+            activity_records = all_records[active_periods]
         except KeyError:
-            records = all_records
+            activity_records = all_records
 
         # Split records into separate groups wherever there is a difference
         # greater than 'delta' between the indices of two adjacent rows
-        group_ids = (records.index.to_series().diff() > delta).cumsum()
-        grouped = records.groupby(group_ids, sort=False)
+        group_ids = (activity_records.index.to_series().diff() > delta).cumsum()
+        grouped = activity_records.groupby(group_ids, sort=False)
 
         # Yield metrics on each split separately
         for _, group in grouped:

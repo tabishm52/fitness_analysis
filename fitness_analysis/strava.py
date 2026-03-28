@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from . import utils
+from . import records, utils
 
 ACTIVITIES_FNAME = "activities.csv"
 ACTIVITIES_CACHE_FNAME = "activities_cache.csv"
@@ -55,21 +55,26 @@ def process_one_activity(
     """Parse a single activity file and compute metrics."""
 
     full_path = Path(path) / filename
-    records = utils.parse_record_cached(full_path, cache_dir)
+    activity_records = records.parse_record_cached(full_path, cache_dir)
 
-    timezone = utils.infer_timezone(records)
+    timezone = utils.infer_timezone(activity_records)
     has_location = timezone is not None
     if timezone is None:
         timezone = np.nan
 
-    if "heart_rate" in records.columns:
-        max_hr = records["heart_rate"].max()
+    if "heart_rate" in activity_records.columns:
+        max_hr = activity_records["heart_rate"].max()
     else:
         max_hr = np.nan
 
-    if "power" in records.columns:
+    if "power" in activity_records.columns:
         estimated_ftp = (
-            records["power"].resample("s").ffill().rolling(20 * 60).mean().max()
+            activity_records["power"]
+            .resample("s")
+            .ffill()
+            .rolling(20 * 60)
+            .mean()
+            .max()
         )
     else:
         estimated_ftp = np.nan
@@ -121,7 +126,7 @@ def process_activities(
 
     if misses:
         if cache_dir:
-            utils.warm_records_cache(misses, path, cache_dir)
+            records.warm_records_cache(misses, path, cache_dir)
 
         miss_map = {f: process_one_activity(f, path, cache_dir) for f in misses}
         results = (
@@ -144,8 +149,8 @@ def process_activities(
 
 
 def invalidate_activities_cache(
+    files: Iterable[str] | None,
     cache_dir: str | PathLike[str],
-    files: Iterable[str] | None = None,
 ) -> None:
     """Invalidate the activities cache.
 
@@ -153,9 +158,9 @@ def invalidate_activities_cache(
     only the entries for the given activity filenames, leaving the rest intact.
 
     Args:
-        cache_dir: Cache directory passed to ``load_strava_activities``.
         files: Activity filenames to remove. If None, the whole cache is
             cleared.
+        cache_dir: Cache directory passed to ``load_strava_activities``.
     """
 
     cache_path = Path(cache_dir) / ACTIVITIES_CACHE_FNAME

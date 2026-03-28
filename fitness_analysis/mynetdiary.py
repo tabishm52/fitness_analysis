@@ -2,11 +2,49 @@
 
 from collections.abc import Callable
 from os import PathLike
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from . import utils
+
+
+def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
+    """Loads and merges data from all Excel files in a directory.
+
+    Loads all sheets of all [xls,xlsx] files in a directory and merges them into
+    one mapping keyed by sheet name. Identically named sheets from each Excel
+    file are concatenated in alphabetical order of Excel file name.
+
+    Args:
+        path: Directory of Excel files.
+
+    Returns:
+        A mapping of merged sheet data keyed by sheet name.
+    """
+
+    data_parts: dict[str, list[pd.DataFrame]] = {}
+    files = sorted(Path(path).iterdir())
+
+    for f in files:
+        if f.suffix.lower() not in [".xls", ".xlsx"]:
+            continue
+
+        excel = pd.read_excel(f, sheet_name=None)
+        for sheet_name, sheet_data in excel.items():
+            if sheet_data.empty:
+                continue
+            data_parts.setdefault(sheet_name, []).append(sheet_data)
+
+    merged_data: dict[str, pd.DataFrame] = {}
+    for sheet_name, parts in data_parts.items():
+        if len(parts) == 1:
+            merged_data[sheet_name] = parts[0]
+        else:
+            merged_data[sheet_name] = pd.concat(parts).reset_index(drop=True)
+
+    return merged_data
 
 
 def eer_male(
@@ -61,35 +99,6 @@ def eer_female(
     return 354 - 6.91 * age + pa * (4.25 * weight + 18.44 * height)
 
 
-def _ewm_min_periods_from_halflife(
-    halflife: str | pd.Timedelta,
-    coverage: float,
-    floor: int = 2,
-) -> int:
-    """Derive EWM ``min_periods`` from half-life and target weight coverage.
-
-    Args:
-        halflife: EWM half-life (for example, ``'3D'``).
-        coverage: Target cumulative EWM weight mass in ``(0, 1)``.
-        floor: Minimum returned value.
-
-    Returns:
-        Integer ``min_periods`` aligned to the specified half-life.
-    """
-
-    if not 0 < coverage < 1:
-        raise ValueError("coverage must be in (0, 1)")
-
-    halflife_days = pd.to_timedelta(halflife) / pd.Timedelta("1D")
-    if halflife_days <= 0:
-        raise ValueError("halflife must be positive")
-
-    daily_decay = 0.5 ** (1 / halflife_days)
-    periods = int(np.ceil(np.log(1 - coverage) / np.log(daily_decay)))
-
-    return max(floor, periods)
-
-
 def load_mnd_data(
     path: str | PathLike[str],
     eer_func: Callable[[pd.Series], pd.Series],
@@ -112,23 +121,23 @@ def load_mnd_data(
     """
 
     # Load MyNetDiary data
-    mnd_data = utils.merge_excel_files(path)
+    mnd_data = merge_excel_files(path)
 
     # Tuned averaging controls
     weight_coverage = 0.50
     calorie_coverage = 0.67
     accuracy_coverage = 0.95
 
-    weight_min_periods = _ewm_min_periods_from_halflife(
+    weight_min_periods = utils.ewm_min_periods_from_halflife(
         weight_halflife,
         coverage=weight_coverage,
     )
-    calorie_min_periods = _ewm_min_periods_from_halflife(
+    calorie_min_periods = utils.ewm_min_periods_from_halflife(
         calorie_halflife,
         coverage=calorie_coverage,
     )
     # Window matched to the effective span of the calorie EWM
-    accuracy_window_days = _ewm_min_periods_from_halflife(
+    accuracy_window_days = utils.ewm_min_periods_from_halflife(
         calorie_halflife,
         coverage=accuracy_coverage,
     )
