@@ -297,7 +297,7 @@ def identify_inactive_periods(
     return (durations >= min_duration.total_seconds()) & below_threshold
 
 
-def parse_cached(
+def parse_record_cached(
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None = None,
 ) -> pd.DataFrame:
@@ -337,6 +337,83 @@ def parse_cached(
     return records
 
 
+def ensure_record_cached(
+    path: str | PathLike[str],
+    cache_dir: str | PathLike[str],
+) -> None:
+    """Parse a FIT/TCX/GPX file and write its parquet cache if not present.
+
+    Returns None so pool workers avoid pickling DataFrames over IPC.
+    Worker-safe: picklable and suitable for use inside multiprocessing pools.
+    """
+
+    parse_record_cached(path, cache_dir)
+
+
+def warm_records_cache(
+    files: Iterable[str | PathLike[str]],
+    path: str | PathLike[str],
+    cache_dir: str | PathLike[str],
+) -> None:
+    """Ensure parquet files exist for all given activity files.
+
+    Identifies files without a parquet cache and parses them, pooling workers
+    when there are enough cold files to justify the overhead. Files with an
+    existing parquet cache are skipped.
+
+    Args:
+        files: Activity filenames (relative to ``path``).
+        path: Directory containing the activity files.
+        cache_dir: Cache directory containing the parquet subdirectory.
+    """
+
+    parquet_dir = Path(cache_dir) / RECORDS_CACHE_DIR
+    cold = [
+        f
+        for f in files
+        if not (parquet_dir / (Path(f).name + ".parquet")).exists()
+    ]
+    if not cold:
+        return
+
+    args = [(Path(path) / f, cache_dir) for f in cold]
+    if len(cold) > multiprocessing.cpu_count() * 2:
+        with multiprocessing.Pool() as p:
+            p.starmap(ensure_record_cached, args)
+    else:
+        for a in args:
+            ensure_record_cached(*a)
+
+
+def invalidate_records_cache(
+    cache_dir: str | PathLike[str],
+    files: Iterable[str | PathLike[str]] | None = None,
+) -> None:
+    """Invalidate the records (parquet) cache.
+
+    If ``files`` is None, deletes all parquet files in the cache directory.
+    Otherwise removes only the parquet files for the given activity filenames.
+
+    Args:
+        cache_dir: Cache directory passed to ``load_activity_records`` or
+            ``load_strava_activities``.
+        files: Activity filenames whose parquet files should be removed.
+            If None, the entire records cache is cleared.
+    """
+
+    parquet_dir = Path(cache_dir) / RECORDS_CACHE_DIR
+    if not parquet_dir.exists():
+        return
+    if files is None:
+        for p in parquet_dir.glob("*.parquet"):
+            p.unlink()
+        return
+    for f in files:
+        parquet_path = parquet_dir / (Path(f).name + ".parquet")
+        if parquet_path.exists():
+            parquet_path.unlink()
+
+
 def load_activity_records(
     files: pd.Series,
     path: str | PathLike[str],
@@ -344,8 +421,10 @@ def load_activity_records(
 ) -> list[pd.DataFrame]:
     """Load parsed records for a set of activity files.
 
-    Parses each file using a Parquet cache when available. Parsing is
-    parallelized across a multiprocessing pool.
+    Parses each file using a Parquet cache when available. When a cache
+    directory is provided, cold files (no parquet yet) are pooled for
+    parallel parsing, then all files are read serially from the warm cache.
+    Without a cache directory, parsing is pooled directly for large batches.
 
     Args:
         files: Activity filenames (relative to ``path``).
@@ -356,8 +435,15 @@ def load_activity_records(
         Parsed records, one per file, in the same order as ``files``.
     """
 
-    args = ((Path(path) / f, cache_dir) for f in files)
-    if len(files) > multiprocessing.cpu_count():
-        with multiprocessing.Pool() as p:
-            return p.starmap(parse_cached, args)
-    return [parse_cached(*a) for a in args]
+    if cache_dir is None:
+        args = [(Path(path) / f, None) for f in files]
+        if len(files) > multiprocessing.cpu_count() * 2:
+            with multiprocessing.Pool() as p:
+                return p.starmap(parse_record_cached, args)
+        return [parse_record_cached(*a) for a in args]
+
+    # Pass 1: pool cold files (raw FIT parse → write parquet)
+    warm_records_cache(files, path, cache_dir)
+
+    # Pass 2: read all from parquet serially
+    return [parse_record_cached(Path(path) / f, cache_dir) for f in files]

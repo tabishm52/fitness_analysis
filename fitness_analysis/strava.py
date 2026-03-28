@@ -1,7 +1,6 @@
 """Functions for processing Strava bicycling activities."""
 
-import multiprocessing
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from os import PathLike
 from pathlib import Path
 from typing import Any
@@ -12,10 +11,10 @@ import pandas as pd
 from . import utils
 
 ACTIVITIES_FNAME = "activities.csv"
-CACHE_FNAME = "bicycle_cache.csv"
+ACTIVITIES_CACHE_FNAME = "activities_cache.csv"
 
 
-def check_cache(
+def check_activities_cache(
     filename: str | float,
     cache: pd.DataFrame | None,
 ) -> dict[str, Any] | None:
@@ -56,7 +55,7 @@ def process_one_activity(
     """Parse a single activity file and compute metrics."""
 
     full_path = Path(path) / filename
-    records = utils.parse_cached(full_path, cache_dir)
+    records = utils.parse_record_cached(full_path, cache_dir)
 
     timezone = utils.infer_timezone(records)
     has_location = timezone is not None
@@ -91,38 +90,40 @@ def process_activities(
 ) -> pd.DataFrame:
     """Run calculations on a set of activities.
 
-    Calculates metrics on a set of activity files. Loading of activities in FIT
-    format can be slow, so results are cached to a local file. If cached results
-    are available, processing will be skipped and results from the cache will be
-    returned instead.
+    Computes per-activity metrics (timezone, heart rate, estimated FTP) using a
+    two-level caching strategy:
+
+    1. **Activities cache** (``ACTIVITIES_CACHE_FNAME``): stores computed
+       metrics. Activities found here are returned immediately with no
+       further work.
+    2. **Records cache** (parquet files, one per activity): stores the parsed
+       FIT/TCX/GPX records. For activities not in the activities cache, cold
+       files (no parquet yet) are parsed in parallel and written to the records
+       cache first, then metrics are computed serially from the warm cache.
 
     Args:
         files: List of activity files to process.
         path: Directory containing the files.
-        cache_dir: Optional directory for cache of results.
+        cache_dir: Optional directory for both caches. If omitted, no caching
+            is performed and all files are parsed and processed on every call.
 
     Returns:
         Calculation results aligned to the index of ``files``.
     """
 
-    # Load cached calculation results if available
-    cache_path = Path(cache_dir) / CACHE_FNAME if cache_dir else None
+    cache_path = Path(cache_dir) / ACTIVITIES_CACHE_FNAME if cache_dir else None
     cache = None
     if cache_path and cache_path.exists():
         cache = pd.read_csv(cache_path).set_index("filename")
 
-    # Collect results for cache hits and a list of misses to parse in parallel.
-    results = [check_cache(f, cache) for f in files]
+    results = [check_activities_cache(f, cache) for f in files]
     misses = [f for f, r in zip(files, results) if r is None]
 
     if misses:
-        args = ((f, path, cache_dir) for f in misses)
-        if len(misses) > multiprocessing.cpu_count():
-            with multiprocessing.Pool() as p:
-                parsed = p.starmap(process_one_activity, args)
-        else:
-            parsed = (process_one_activity(*a) for a in args)
-        miss_map = {r["filename"]: r for r in parsed}
+        if cache_dir:
+            utils.warm_records_cache(misses, path, cache_dir)
+
+        miss_map = {f: process_one_activity(f, path, cache_dir) for f in misses}
         results = (
             r if r is not None else miss_map[f] for f, r in zip(files, results)
         )
@@ -130,7 +131,7 @@ def process_activities(
     calcs = pd.DataFrame(results, index=files.index)
 
     if cache_path is not None:
-        # Add new results to cache, deduplicate and save
+        # Merge new results with existing cache, drop NaN-filename rows and dups
         if cache is not None:
             new_cache = pd.concat([calcs.set_index("filename"), cache])
         else:
@@ -142,44 +143,84 @@ def process_activities(
     return calcs
 
 
+def invalidate_activities_cache(
+    cache_dir: str | PathLike[str],
+    files: Iterable[str] | None = None,
+) -> None:
+    """Invalidate the activities cache.
+
+    If ``files`` is None, deletes the entire cache file. Otherwise removes
+    only the entries for the given activity filenames, leaving the rest intact.
+
+    Args:
+        cache_dir: Cache directory passed to ``load_strava_activities``.
+        files: Activity filenames to remove. If None, the whole cache is
+            cleared.
+    """
+
+    cache_path = Path(cache_dir) / ACTIVITIES_CACHE_FNAME
+    if not cache_path.exists():
+        return
+    if files is None:
+        cache_path.unlink()
+        return
+    cache = pd.read_csv(cache_path).set_index("filename")
+    cache = cache.drop(index=[f for f in files if f in cache.index])
+    cache.sort_index().to_csv(cache_path)
+
+
+def load_strava_activities_raw(
+    path: str | PathLike[str],
+) -> pd.DataFrame:
+    """Load raw bicycling activity data from a Strava export CSV.
+
+    Reads ``ACTIVITIES_FNAME`` and filters to Ride and Virtual Ride activities
+    without computing any additional metrics from the underlying activity files.
+
+    Args:
+        path: Strava export directory.
+
+    Returns:
+        Raw activity data indexed by UTC activity date.
+    """
+
+    csv = pd.read_csv(Path(path) / ACTIVITIES_FNAME).query(
+        '`Activity Type` in ["Ride", "Virtual Ride"]'
+    )
+    csv["Activity Date"] = pd.to_datetime(
+        csv["Activity Date"], format="%b %d, %Y, %I:%M:%S %p"
+    )
+    return csv.set_index("Activity Date")
+
+
 def load_strava_activities(
     path: str | PathLike[str],
     home_tz: Callable[[pd.Series], pd.Series | str] | str,
     cache_dir: str | PathLike[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Loads bicycling activity data from a Strava data export.
+    """Load bicycling activity data from a Strava export directory.
 
-    In addition to loading Strava's activities.csv, calculates certain
-    additional metrics from the underlying activity files. Since parsing all
-    activity files takes some time, results are cached to a local file. If
-    cached results are available, processing will be skipped and results from
-    the cache will be returned instead.
+    Reads ``ACTIVITIES_FNAME``, filters to Ride and Virtual Ride activities,
+    and computes additional per-activity metrics (timezone, max heart rate,
+    estimated FTP) from the underlying activity files. Results are cached so
+    that subsequent calls are fast even for large exports.
 
     Args:
         path: Strava export directory.
-        home_tz: Fallback timezone used when location data are unavailable
-            (for example, trainer rides). Accepts either a single timezone
-            value or a callable that returns timezone values per activity.
-        cache_dir: Optional location for cache of results.
+        home_tz: Fallback timezone for activities without GPS location data
+            (e.g. trainer rides). Either a fixed timezone string or a callable
+            that accepts a Series and returns per-activity timezone values.
+        cache_dir: Optional directory for cached results. If omitted, activity
+            files are parsed on every call.
 
     Returns:
-        Tuple of (activities, weekly_sums) where activities is the processed
-        Strava bicycling activity data and weekly_sums is a DataFrame of
-        distance, elevation, and time metrics resampled to weekly totals.
+        Tuple of (activities, weekly_sums). ``activities`` contains one row per
+        ride with distance, elevation, time, heart rate, and FTP metrics indexed
+        by local date. ``weekly_sums`` contains distance, elevation, and time
+        totals resampled to weekly (Sunday) buckets.
     """
 
-    # Load activities.csv and filter out any non-bicycle activities
-    csv = pd.read_csv(Path(path) / ACTIVITIES_FNAME).query(
-        '`Activity Type` in ["Ride", "Virtual Ride"]'
-    )
-
-    # Set the UTC date and time of the activity as the index
-    csv["Activity Date"] = pd.to_datetime(
-        csv["Activity Date"], format="%b %d, %Y, %I:%M:%S %p"
-    )
-    csv.set_index("Activity Date", inplace=True)
-
-    # Run a set of calculations on all activity files
+    csv = load_strava_activities_raw(path)
     calcs = process_activities(csv["Filename"], path, cache_dir)
 
     # Infer activities that were performed on a stationary trainer
