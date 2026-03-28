@@ -117,6 +117,7 @@ def load_mnd_data(
     # Tuned averaging controls
     weight_coverage = 0.50
     calorie_coverage = 0.67
+    accuracy_coverage = 0.95
 
     weight_min_periods = _ewm_min_periods_from_halflife(
         weight_halflife,
@@ -126,8 +127,14 @@ def load_mnd_data(
         calorie_halflife,
         coverage=calorie_coverage,
     )
+    # Window matched to the effective span of the calorie EWM
+    accuracy_window_days = _ewm_min_periods_from_halflife(
+        calorie_halflife,
+        coverage=accuracy_coverage,
+    )
 
     rate_min_periods = max(2, rate_window_days // 2)
+    accuracy_min_periods = max(2, accuracy_window_days // 2)
 
     # Construct a table of actual & smoothed weights
     weight = pd.DataFrame()
@@ -167,9 +174,8 @@ def load_mnd_data(
     )
     calories.index.rename("date", inplace=True)
 
-    # Create an 'adjusted food' column that fills in a rolling average for
-    # days where no food was logged
-    calories["food_adjusted"] = calories["food"].fillna(
+    # Impute unlogged days with the rolling average of logged days
+    food_imputed = calories["food"].fillna(
         calories["food"]
         .ewm(
             halflife=calorie_halflife,
@@ -179,35 +185,32 @@ def load_mnd_data(
         .mean()
     )
 
-    # Calculate net calorie balance for each day
-    calories["net_daily"] = (
-        calories["food_adjusted"] - calories["baseline"] - calories["exercise"]
-    )
-
     # Calculate rolling average of net calorie balance
-    calories["net_recorded"] = (
-        calories["net_daily"]
-        .ewm(
-            halflife=calorie_halflife,
-            times=calories.index,
-            min_periods=calorie_min_periods,
-        )
-        .mean()
-    )
+    net_daily = food_imputed - calories["baseline"] - calories["exercise"]
+    calories["net_recorded"] = net_daily.ewm(
+        halflife=calorie_halflife,
+        times=calories.index,
+        min_periods=calorie_min_periods,
+    ).mean()
 
-    # Convert observed weight gain/loss in lbs/week to calories/day
-    calories["net_observed"] = utils.CAL_PER_LB_WEEK * weight["rate"]
+    # Convert observed weight gain/loss in lbs/week to calories/day.
+    calories["net_observed"] = (
+        utils.CAL_PER_LB_WEEK
+        * utils.rolling_linear_rate(
+            weight["actual"],
+            accuracy_window_days,
+            accuracy_min_periods,
+            "W",
+            center=False,
+        )
+    )
 
     # Calculate "accuracy" of calorie counting relative to actual weight loss
-    avg_food_recorded = (
-        calories["food_adjusted"]
-        .ewm(
-            halflife=calorie_halflife,
-            times=calories.index,
-            min_periods=calorie_min_periods,
-        )
-        .mean()
-    )
+    avg_food_recorded = food_imputed.ewm(
+        halflife=calorie_halflife,
+        times=calories.index,
+        min_periods=calorie_min_periods,
+    ).mean()
     avg_exercise = (
         calories["exercise"]
         .ewm(

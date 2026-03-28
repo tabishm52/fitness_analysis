@@ -199,6 +199,8 @@ def rolling_linear_rate(
     window: int,
     min_periods: int,
     units: str,
+    *,
+    center: bool = True,
 ) -> pd.Series:
     """Compute the rolling OLS slope of a regularly-sampled time series.
 
@@ -216,6 +218,8 @@ def rolling_linear_rate(
             produce a result; windows with fewer yield NaN.
         units: Output rate units (e.g. ``"W"`` for per week, ``"D"`` for
             per day).
+        center: If True, the window is centered on each observation. If False,
+            the window is trailing (causal).
 
     Returns:
         Rolling slope aligned to the input index.
@@ -235,9 +239,8 @@ def rolling_linear_rate(
         pm = pos - pos.mean()
         return units_per_step * (pm @ arr[valid]) / (pm @ pm)
 
-    return series.rolling(window, min_periods=min_periods, center=True).apply(
-        _slope, raw=True
-    )
+    roller = series.rolling(window, min_periods=min_periods, center=center)
+    return roller.apply(_slope, raw=True)
 
 
 def infer_timezone(records: pd.DataFrame) -> str | None:
