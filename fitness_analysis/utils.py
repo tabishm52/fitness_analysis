@@ -246,20 +246,17 @@ def infer_timezone(records: pd.DataFrame) -> str | None:
         or no timezone match is found.
     """
 
-    try:
-        points = records[["latitude", "longitude"]]
-    except KeyError:
+    if "latitude" not in records.columns or "longitude" not in records.columns:
         return None
 
-    idx = points.apply(pd.Series.first_valid_index).max()
+    lat_col = records["latitude"]
+    lng_col = records["longitude"]
+
+    idx = lat_col.first_valid_index()
     if idx is None:
         return None
 
-    lat, lng = points.loc[idx]
-    if pd.isna(lat) or pd.isna(lng):
-        return None
-
-    return tz_finder.timezone_at(lng=lng, lat=lat)
+    return tz_finder.timezone_at(lng=lng_col.loc[idx], lat=lat_col.loc[idx])
 
 
 def identify_inactive_periods(
