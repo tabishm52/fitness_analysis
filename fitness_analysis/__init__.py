@@ -10,8 +10,8 @@ from .strava import (
 from .utils import (
     invalidate_records_cache,
     load_activity_records,
-    time_series_piecewise_regression,
-    time_series_piecewise_regression_with_breaks,
+    piecewise_fit,
+    piecewise_fit_with_breaks,
 )
 
 __all__ = [
@@ -24,6 +24,6 @@ __all__ = [
     "load_mnd_data",
     "load_strava_activities",
     "load_strava_activities_raw",
-    "time_series_piecewise_regression",
-    "time_series_piecewise_regression_with_breaks",
+    "piecewise_fit",
+    "piecewise_fit_with_breaks",
 ]

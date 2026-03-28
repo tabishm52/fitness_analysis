@@ -11,7 +11,6 @@ import pandas as pd
 import pint
 import pwlf
 import sklearn.linear_model
-import sklearn.metrics
 import timezonefinder
 
 # Unit conversion factors derived from pint
@@ -70,141 +69,136 @@ def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
     return merged_data
 
 
-def _to_time_us_uint64(index: pd.Index | Iterable[pd.Timestamp]) -> np.ndarray:
-    """Convert datetime-like values to ``datetime64[us]`` as ``uint64``."""
-
-    return np.array(index).astype("datetime64[us]").astype(np.uint64)
-
-
 def _per_unit_us_factor(units: str) -> np.uint64:
     """Get conversion factor from 1 ``units`` to microseconds."""
 
     return np.uint64(np.timedelta64(np.timedelta64(1, units), "us"))
 
 
-def _fit_pwlf_segments(
+def _to_seconds(
+    index: pd.Index | Iterable[pd.Timestamp], t0_us: float
+) -> np.ndarray:
+    """Convert timestamps to float seconds since a reference time."""
+
+    us = np.array(index).astype("datetime64[us]").astype(np.float64)
+    return (us - t0_us) / 1e6
+
+
+def _pwlf_segments(
     series: pd.Series,
+    x: np.ndarray,
     *,
     num_segments: int,
 ) -> tuple[pwlf.PiecewiseLinFit, np.ndarray, np.ndarray]:
     """Fit a pwlf model using a fixed number of segments."""
 
-    x = _to_time_us_uint64(series.index)
     model = pwlf.PiecewiseLinFit(x, series.values)
-    breakpoints = model.fit(num_segments)
+    breaks_x = model.fit(num_segments)
     regression = model.predict(x)
 
-    return model, breakpoints, regression
+    return model, breaks_x, regression
 
 
-def _fit_pwlf_breaks(
+def _pwlf_breaks(
     series: pd.Series,
+    x: np.ndarray,
     *,
-    breaks: Iterable[pd.Timestamp],
+    breaks_x: np.ndarray,
 ) -> tuple[pwlf.PiecewiseLinFit, np.ndarray, np.ndarray]:
     """Fit a pwlf model using explicit breakpoints."""
 
-    x = _to_time_us_uint64(series.index)
     model = pwlf.PiecewiseLinFit(x, series.values)
-    breakpoints = _to_time_us_uint64(breaks)
-    model.fit_with_breaks(breakpoints)
+    model.fit_with_breaks(breaks_x)
     regression = model.predict(x)
 
-    return model, breakpoints, regression
+    return model, breaks_x, regression
 
 
-def _time_series_piecewise_linear_regression(
+def _pwlf_fit(
     series: pd.Series,
     units: str,
     breaks: Iterable[pd.Timestamp] | None = None,
     num_segments: int | None = None,
-) -> tuple[pd.DataFrame, float]:
+) -> pd.DataFrame:
     """Fit piecewise linear regression on a time-indexed series.
 
     Exactly one of ``breaks`` or ``num_segments`` must be provided.
     """
 
-    # Calculate the conversion factor to desired rate units
-    c = _per_unit_us_factor(units)
-
-    # Fit multi-segment piecewise linear regression.
     if (breaks is None) == (num_segments is None):
         raise ValueError("Specify exactly one of breaks or num_segments")
 
-    fit_func = _fit_pwlf_breaks if breaks is not None else _fit_pwlf_segments
-    fit_kwargs: dict[str, Iterable[pd.Timestamp] | int] = (
-        {"breaks": breaks}
-        if breaks is not None
-        else {"num_segments": num_segments}
+    # x in seconds from t0: avoids float64 precision loss with raw µs (~1.7e18)
+    t0_us = float(
+        np.array(series.index[:1])
+        .astype("datetime64[us]")
+        .astype(np.float64)[0]
     )
-    model, breaks_us, regression = fit_func(
-        series,
-        **fit_kwargs,
-    )
+    x_s = _to_seconds(series.index, t0_us)
+    s_per_unit = float(_per_unit_us_factor(units)) / 1e6  # µs/unit → s/unit
 
-    # Construct the DataFrame of regression results
-    result = pd.DataFrame(index=breaks_us.astype("datetime64[us]"))
-    result["value"] = model.predict(breaks_us)
-    result["rate"] = c * np.append(model.calc_slopes(), [np.nan])
-    r2 = sklearn.metrics.r2_score(series.values, regression)
+    if breaks is not None:
+        breaks_s = _to_seconds(breaks, t0_us)
+        model, bp_s, regression = _pwlf_breaks(series, x_s, breaks_x=breaks_s)
+    else:
+        model, bp_s, regression = _pwlf_segments(
+            series, x_s, num_segments=num_segments
+        )
 
-    return result, r2
+    bp_us = (bp_s * 1e6 + t0_us).astype("datetime64[us]")
+    result = pd.DataFrame(index=bp_us)
+    result["value"] = model.predict(bp_s)
+    result["rate"] = s_per_unit * np.append(model.calc_slopes(), [np.nan])
+
+    return result
 
 
-def time_series_piecewise_regression(
+def piecewise_fit(
     series: pd.Series,
-    num_segments: int,
+    n_segments: int,
+    *,
     units: str,
-) -> tuple[pd.DataFrame, float]:
-    """Perform a piecewise linear regression on a time series.
+) -> pd.DataFrame:
+    """Fit a piecewise linear regression on a time series.
 
     Args:
-        series: Time-indexed values on which to perform regression.
-        num_segments: Number of segments for piecewise regression.
-        units: Time unit to use for calculating slope at each breakpoint
-            (e.g., 'D' means calculate rate per day).
+        series: Time-indexed values. NaN entries are dropped before fitting.
+        n_segments: Number of segments for piecewise regression.
+        units: Time unit for slope at each breakpoint
+            (e.g., 'D' for per day, 'W' for per week).
 
     Returns:
-        Tuple of (result, r2).
-
-        result: Time-indexed breakpoints with value and slope
-            calculated for each breakpoint.
-        r2: Calculated R^2 score of model fit.
+        Time-indexed breakpoints with ``value`` and ``rate`` columns.
     """
 
-    return _time_series_piecewise_linear_regression(
-        series,
-        units,
-        num_segments=num_segments,
-    )
+    return _pwlf_fit(series.dropna(), units, num_segments=n_segments)
 
 
-def time_series_piecewise_regression_with_breaks(
+def piecewise_fit_with_breaks(
     series: pd.Series,
     breaks: Iterable[pd.Timestamp],
+    *,
     units: str,
-) -> tuple[pd.DataFrame, float]:
-    """Perform a piecewise linear regression with specified breakpoints.
+) -> pd.DataFrame:
+    """Fit a piecewise linear regression with specified breakpoints.
 
     Args:
-        series: Time-indexed values on which to perform regression.
-        breaks: Iterable of Timestamps of breakpoints for piecewise regression.
-        units: Time unit to use for calculating slope at each breakpoint
-            (e.g., 'D' means calculate rate per day).
+        series: Time-indexed values. NaN entries are dropped before fitting.
+        breaks: Breakpoint timestamps for piecewise regression.
+        units: Time unit for slope at each breakpoint
+            (e.g., 'D' for per day, 'W' for per week).
 
     Returns:
-        Tuple of (result, r2).
-
-        result: Time-indexed breakpoints with value and slope
-            calculated for each breakpoint.
-        r2: Calculated R^2 score of model fit.
+        Time-indexed breakpoints with ``value`` and ``rate`` columns.
     """
 
-    return _time_series_piecewise_linear_regression(
-        series,
-        units,
-        breaks=breaks,
-    )
+    return _pwlf_fit(series.dropna(), units, breaks=breaks)
+
+
+def _to_time_us_uint64(index: pd.Index | Iterable[pd.Timestamp]) -> np.ndarray:
+    """Convert datetime-like values to ``datetime64[us]`` as ``uint64``."""
+
+    return np.array(index).astype("datetime64[us]").astype(np.uint64)
 
 
 def time_series_linear_rate(series: pd.Series, units: str) -> float:
