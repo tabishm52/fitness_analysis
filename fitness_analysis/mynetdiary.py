@@ -95,7 +95,7 @@ def load_mnd_data(
     eer_func: Callable[[pd.Series], pd.Series],
     weight_halflife: str = "3D",
     calorie_halflife: str = "9D",
-    rate_window_days: int = 21,
+    rate_window_days: int = 28,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Process weight and calorie data from a MyNetDiary data export.
 
@@ -147,14 +147,8 @@ def load_mnd_data(
     )
 
     # Calculate weight gain/loss rate over time
-    weight["rate"] = (
-        weight["smoothed"]
-        .rolling(
-            rate_window_days,
-            min_periods=rate_min_periods,
-            center=True,
-        )
-        .apply(lambda x: utils.time_series_linear_rate(x.dropna(), "W"))
+    weight["rate"] = utils.rolling_linear_rate(
+        weight["actual"], rate_window_days, rate_min_periods, "W"
     )
 
     # Construct a table of calorie information

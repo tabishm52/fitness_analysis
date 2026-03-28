@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 import pint
 import pwlf
-import sklearn.linear_model
 import timezonefinder
 
 # Unit conversion factors derived from pint
@@ -195,35 +194,50 @@ def piecewise_fit_with_breaks(
     return _pwlf_fit(series.dropna(), units, breaks=breaks)
 
 
-def _to_time_us_uint64(index: pd.Index | Iterable[pd.Timestamp]) -> np.ndarray:
-    """Convert datetime-like values to ``datetime64[us]`` as ``uint64``."""
+def rolling_linear_rate(
+    series: pd.Series,
+    window: int,
+    min_periods: int,
+    units: str,
+) -> pd.Series:
+    """Compute the rolling OLS slope of a regularly-sampled time series.
 
-    return np.array(index).astype("datetime64[us]").astype(np.uint64)
-
-
-def time_series_linear_rate(series: pd.Series, units: str) -> float:
-    """Calculate the slope of the linear regression of a time series.
+    The series must be on a regular time grid but may contain NaN for missing
+    observations. The grid step is inferred from the median index spacing.
+    Each window's slope is computed using only the non-NaN observations, with
+    their actual time offsets within the window used as x-values. When no
+    values are missing the computation reduces to a fixed-kernel dot product.
 
     Args:
-        series: Time-indexed values on which to perform regression.
-        units: Time unit to use for calculating slope (e.g., 'D' means calculate
-          rate per day).
+        series: Regularly-gridded time-indexed values. NaN entries are treated
+            as missing observations and excluded from each window's regression.
+        window: Rolling window size in grid steps.
+        min_periods: Minimum number of non-NaN observations required to
+            produce a result; windows with fewer yield NaN.
+        units: Output rate units (e.g. ``"W"`` for per week, ``"D"`` for
+            per day).
 
     Returns:
-        Calculated slope as a rate per ``units``.
+        Rolling slope aligned to the input index.
     """
 
-    # Convert time index to a uint array (in us) for scipy calculations
-    x = _to_time_us_uint64(series.index)
+    # Infer grid step from median index spacing to support any regular grid
+    step_us = np.median(
+        np.diff(
+            np.array(series.index).astype("datetime64[us]").astype(np.float64)
+        )
+    )
+    units_per_step = float(_per_unit_us_factor(units)) / step_us
 
-    # Do an ordinary linear regression
-    model = sklearn.linear_model.LinearRegression()
-    model.fit(x.reshape(-1, 1), series.values)
+    def _slope(arr: np.ndarray) -> float:
+        valid = ~np.isnan(arr)
+        pos = np.where(valid)[0].astype(np.float64)
+        pm = pos - pos.mean()
+        return units_per_step * (pm @ arr[valid]) / (pm @ pm)
 
-    # Get the conversion factor to desired rate units
-    c = _per_unit_us_factor(units)
-
-    return c * model.coef_[0]
+    return series.rolling(window, min_periods=min_periods, center=True).apply(
+        _slope, raw=True
+    )
 
 
 def infer_timezone(records: pd.DataFrame) -> str | None:
