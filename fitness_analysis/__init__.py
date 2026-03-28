@@ -1,7 +1,13 @@
 """Analysis tools for fitness activity data from Strava and MyNetDiary."""
 
 from .commute import load_commute_activities
-from .mynetdiary import eer_female, eer_male, load_mnd_data
+from .mynetdiary import (
+    MndTuning,
+    eer_female,
+    eer_male,
+    invalidate_mnd_cache,
+    load_mnd_data,
+)
 from .records import invalidate_records_cache, load_activity_records
 from .strava import (
     invalidate_activities_cache,
@@ -11,9 +17,11 @@ from .strava import (
 from .utils import piecewise_fit, piecewise_fit_with_breaks
 
 __all__ = [
+    "MndTuning",
     "eer_female",
     "eer_male",
     "invalidate_activities_cache",
+    "invalidate_mnd_cache",
     "invalidate_records_cache",
     "load_activity_records",
     "load_commute_activities",

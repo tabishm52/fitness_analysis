@@ -1,5 +1,9 @@
 """Functions for processing MyNetDiary fitness data."""
 
+import dataclasses
+import hashlib
+import json
+import shutil
 from collections.abc import Callable
 from os import PathLike
 from pathlib import Path
@@ -8,6 +12,24 @@ import numpy as np
 import pandas as pd
 
 from . import utils
+
+MND_CACHE_DIR = "mnd_data"
+MND_FINGERPRINT_FNAME = "_fingerprint.txt"
+
+
+@dataclasses.dataclass
+class MndTuning:
+    """Tuning parameters for ``load_mnd_data``.
+
+    Attributes:
+        weight_halflife: Exponential half-life for weight smoothing.
+        calorie_halflife: Exponential half-life for calorie smoothing.
+        rate_window_days: Rolling window (days) for weight-rate regression.
+    """
+
+    weight_halflife: str = "3D"
+    calorie_halflife: str = "9D"
+    rate_window_days: int = 28
 
 
 def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
@@ -25,12 +47,11 @@ def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
     """
 
     data_parts: dict[str, list[pd.DataFrame]] = {}
-    files = sorted(Path(path).iterdir())
+    excel_files = sorted(
+        f for f in Path(path).iterdir() if f.suffix.lower() in {".xls", ".xlsx"}
+    )
 
-    for f in files:
-        if f.suffix.lower() not in [".xls", ".xlsx"]:
-            continue
-
+    for f in excel_files:
         excel = pd.read_excel(f, sheet_name=None)
         for sheet_name, sheet_data in excel.items():
             if sheet_data.empty:
@@ -45,6 +66,71 @@ def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
             merged_data[sheet_name] = pd.concat(parts).reset_index(drop=True)
 
     return merged_data
+
+
+def merge_excel_files_cached(
+    path: str | PathLike[str],
+    cache_dir: str | PathLike[str],
+) -> dict[str, pd.DataFrame]:
+    """Load and merge Excel files, using a parquet cache when available.
+
+    The cache is invalidated whenever the set of Excel files or any of their
+    modification times changes. On a cache hit all sheets are read from
+    parquet; on a miss the Excel files are read and the cache is written.
+
+    Args:
+        path: Directory of Excel files.
+        cache_dir: Directory for the parquet cache.
+
+    Returns:
+        A mapping of merged sheet data keyed by sheet name.
+    """
+
+    excel_files = sorted(
+        f for f in Path(path).iterdir() if f.suffix.lower() in {".xls", ".xlsx"}
+    )
+    fingerprint = hashlib.md5(
+        json.dumps(
+            sorted((f.name, f.stat().st_mtime) for f in excel_files)
+        ).encode()
+    ).hexdigest()
+
+    cache_path = Path(cache_dir) / MND_CACHE_DIR
+    fingerprint_path = cache_path / MND_FINGERPRINT_FNAME
+
+    stored = fingerprint_path.read_text() if fingerprint_path.exists() else None
+    cached = stored == fingerprint
+    if cached:
+        return {
+            p.stem: pd.read_parquet(p) for p in cache_path.glob("*.parquet")
+        }
+
+    data = merge_excel_files(path)
+    cache_path.mkdir(parents=True, exist_ok=True)
+
+    for sheet_name, df in data.items():
+        obj_cols = df.select_dtypes(include="object").columns
+        df.astype({col: "string" for col in obj_cols}).to_parquet(
+            cache_path / f"{sheet_name}.parquet"
+        )
+    fingerprint_path.write_text(fingerprint)
+
+    return data
+
+
+def invalidate_mnd_cache(cache_dir: str | PathLike[str]) -> None:
+    """Invalidate the MyNetDiary parquet cache.
+
+    Deletes the cache directory, forcing a full Excel re-read on the next
+    call to ``load_mnd_data``.
+
+    Args:
+        cache_dir: Cache directory passed to ``load_mnd_data``.
+    """
+
+    cache_path = Path(cache_dir) / MND_CACHE_DIR
+    if cache_path.exists():
+        shutil.rmtree(cache_path)
 
 
 def eer_male(
@@ -102,9 +188,8 @@ def eer_female(
 def load_mnd_data(
     path: str | PathLike[str],
     eer_func: Callable[[pd.Series], pd.Series],
-    weight_halflife: str = "3D",
-    calorie_halflife: str = "9D",
-    rate_window_days: int = 28,
+    cache_dir: str | PathLike[str] | None = None,
+    tuning: MndTuning | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Process weight and calorie data from a MyNetDiary data export.
 
@@ -112,16 +197,21 @@ def load_mnd_data(
         path: MyNetDiary export directory.
         eer_func: Callable that wraps eer_male or eer_female with height
             and dob fields specified by caller.
-        weight_halflife: Exponential half-life for weight smoothing.
-        calorie_halflife: Exponential half-life for calorie smoothing.
-        rate_window_days: Rolling window (days) for weight-rate regression.
+        cache_dir: Optional cache directory for the parquet cache.
+        tuning: Optional tuning parameters. Defaults to ``MndTuning()``.
 
     Returns:
         Tuple containing processed weight and calorie metrics.
     """
 
+    if tuning is None:
+        tuning = MndTuning()
+
     # Load MyNetDiary data
-    mnd_data = merge_excel_files(path)
+    if cache_dir is not None:
+        mnd_data = merge_excel_files_cached(path, cache_dir)
+    else:
+        mnd_data = merge_excel_files(path)
 
     # Tuned averaging controls
     weight_coverage = 0.50
@@ -129,20 +219,20 @@ def load_mnd_data(
     accuracy_coverage = 0.95
 
     weight_min_periods = utils.ewm_min_periods_from_halflife(
-        weight_halflife,
+        tuning.weight_halflife,
         coverage=weight_coverage,
     )
     calorie_min_periods = utils.ewm_min_periods_from_halflife(
-        calorie_halflife,
+        tuning.calorie_halflife,
         coverage=calorie_coverage,
     )
     # Window matched to the effective span of the calorie EWM
     accuracy_window_days = utils.ewm_min_periods_from_halflife(
-        calorie_halflife,
+        tuning.calorie_halflife,
         coverage=accuracy_coverage,
     )
 
-    rate_min_periods = max(2, rate_window_days // 2)
+    rate_min_periods = max(2, tuning.rate_window_days // 2)
     accuracy_min_periods = max(2, accuracy_window_days // 2)
 
     # Construct a table of actual & smoothed weights
@@ -155,7 +245,7 @@ def load_mnd_data(
     weight["smoothed"] = (
         weight["actual"]
         .ewm(
-            halflife=weight_halflife,
+            halflife=tuning.weight_halflife,
             times=weight.index,
             min_periods=weight_min_periods,
         )
@@ -164,7 +254,7 @@ def load_mnd_data(
 
     # Calculate weight gain/loss rate over time
     weight["rate"] = utils.rolling_linear_rate(
-        weight["actual"], rate_window_days, rate_min_periods, "W"
+        weight["actual"], tuning.rate_window_days, rate_min_periods, "W"
     )
 
     # Construct a table of calorie information
@@ -187,7 +277,7 @@ def load_mnd_data(
     food_imputed = calories["food"].fillna(
         calories["food"]
         .ewm(
-            halflife=calorie_halflife,
+            halflife=tuning.calorie_halflife,
             times=calories.index,
             min_periods=calorie_min_periods,
         )
@@ -197,7 +287,7 @@ def load_mnd_data(
     # Calculate rolling average of net calorie balance
     net_daily = food_imputed - calories["baseline"] - calories["exercise"]
     calories["net_recorded"] = net_daily.ewm(
-        halflife=calorie_halflife,
+        halflife=tuning.calorie_halflife,
         times=calories.index,
         min_periods=calorie_min_periods,
     ).mean()
@@ -216,14 +306,14 @@ def load_mnd_data(
 
     # Calculate "accuracy" of calorie counting relative to actual weight loss
     avg_food_recorded = food_imputed.ewm(
-        halflife=calorie_halflife,
+        halflife=tuning.calorie_halflife,
         times=calories.index,
         min_periods=calorie_min_periods,
     ).mean()
     avg_exercise = (
         calories["exercise"]
         .ewm(
-            halflife=calorie_halflife,
+            halflife=tuning.calorie_halflife,
             times=calories.index,
             min_periods=calorie_min_periods,
         )
