@@ -16,40 +16,50 @@ ACTIVITIES_FNAME = "activities.csv"
 ACTIVITIES_CACHE_FNAME = "activities_cache.csv"
 
 
-def check_activities_cache(
-    filename: str | float,
-    cache: pd.DataFrame | None,
-) -> dict[str, Any] | None:
-    """Check whether a single activity is in the cache.
+def _cache_df_to_dict(cache: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    """Convert a cache DataFrame to a filename-keyed dict of result dicts."""
 
-    No validation is performed — activity files are assumed immutable after
-    Strava export. Returns the cached result dict on a hit, or None on a miss.
-    NaN filenames (activities with no file) always return a result immediately.
+    return {
+        filename: {
+            "filename": filename,
+            "timezone": row["timezone"],
+            "has_location": row["has_location"],
+            "max_heart_rate": row["max_heart_rate"],
+            "estimated_ftp": row["estimated_ftp"],
+        }
+        for filename, row in cache.iterrows()
+    }
+
+
+def invalidate_activities_cache(
+    files: Iterable[str] | None,
+    cache_dir: str | PathLike[str],
+) -> None:
+    """Invalidate the activities cache.
+
+    If ``files`` is None, deletes the entire cache file. Otherwise removes
+    only the entries for the given activity filenames, leaving the rest intact.
+
+    Args:
+        files: Activity filenames to remove. If None, the whole cache is
+            cleared.
+        cache_dir: Cache directory passed to ``load_strava_activities``.
     """
 
-    if pd.isna(filename):
-        return {
-            "filename": filename,
-            "timezone": np.nan,
-            "has_location": False,
-            "max_heart_rate": np.nan,
-            "estimated_ftp": np.nan,
-        }
+    cache_path = Path(cache_dir) / ACTIVITIES_CACHE_FNAME
+    if not cache_path.exists():
+        return
 
-    if cache is not None and filename in cache.index:
-        cached = cache.loc[filename]
-        return {
-            "filename": filename,
-            "timezone": cached["timezone"],
-            "has_location": cached["has_location"],
-            "max_heart_rate": cached["max_heart_rate"],
-            "estimated_ftp": cached["estimated_ftp"],
-        }
+    if files is None:
+        cache_path.unlink()
+        return
 
-    return None
+    cache = pd.read_csv(cache_path, index_col="filename")
+    cache = cache[~cache.index.isin(list(files))]
+    cache.sort_index().to_csv(cache_path)
 
 
-def process_one_activity(
+def process_activity_file(
     filename: str | float,
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None = None,
@@ -70,6 +80,7 @@ def process_one_activity(
         max_hr = np.nan
 
     if "power" in activity_records.columns:
+        # 20-minute mean power as a proxy for FTP
         estimated_ftp = (
             activity_records["power"]
             .resample("s")
@@ -120,64 +131,51 @@ def process_activities(
         Calculation results aligned to the index of ``files``.
     """
 
-    if not cache_dir:
+    if cache_dir is None:
         with ProcessPoolExecutor() as ex:
-            results = ex.map(partial(process_one_activity, path=path), files)
+            results = ex.map(partial(process_activity_file, path=path), files)
         return pd.DataFrame(results, index=files.index)
 
     cache_path = Path(cache_dir) / ACTIVITIES_CACHE_FNAME
-    if cache_path.exists():
-        cache = pd.read_csv(cache_path).set_index("filename")
-    else:
-        cache = None
+    cache_df = (
+        pd.read_csv(cache_path, index_col="filename")
+        if cache_path.exists()
+        else None
+    )
+    cache = _cache_df_to_dict(cache_df) if cache_df is not None else {}
 
-    results = [check_activities_cache(f, cache) for f in files]
+    no_file_result = {
+        "timezone": np.nan,
+        "has_location": False,
+        "max_heart_rate": np.nan,
+        "estimated_ftp": np.nan,
+    }
+    results = [
+        {"filename": f, **no_file_result} if pd.isna(f) else cache.get(f)
+        for f in files
+    ]
     misses = [f for f, r in zip(files, results) if r is None]
+
+    if not misses:
+        return pd.DataFrame(results, index=files.index)
+
     records.warm_records_cache(misses, path, cache_dir)
     miss_map = dict(
-        zip(misses, (process_one_activity(f, path, cache_dir) for f in misses))
+        zip(misses, (process_activity_file(f, path, cache_dir) for f in misses))
     )
+
     calcs = pd.DataFrame(
-        (r or miss_map[f] for f, r in zip(files, results)),
+        (r if r is not None else miss_map[f] for f, r in zip(files, results)),
         index=files.index,
     )
 
-    # Merge new results with existing cache, drop NaN-filename rows and dups
-    if cache is not None:
-        new_cache = pd.concat([calcs.set_index("filename"), cache])
-    else:
-        new_cache = calcs.set_index("filename")
-    new_cache = new_cache[~new_cache.index.isna()]
-    new_cache = new_cache[~new_cache.index.duplicated()]
-    new_cache.sort_index().to_csv(cache_path)
+    new_rows = pd.DataFrame(miss_map.values()).set_index("filename")
+    updated = (
+        pd.concat([cache_df, new_rows]) if cache_df is not None else new_rows
+    )
+    updated.sort_index().to_csv(cache_path)
 
     return calcs
-
-
-def invalidate_activities_cache(
-    files: Iterable[str] | None,
-    cache_dir: str | PathLike[str],
-) -> None:
-    """Invalidate the activities cache.
-
-    If ``files`` is None, deletes the entire cache file. Otherwise removes
-    only the entries for the given activity filenames, leaving the rest intact.
-
-    Args:
-        files: Activity filenames to remove. If None, the whole cache is
-            cleared.
-        cache_dir: Cache directory passed to ``load_strava_activities``.
-    """
-
-    cache_path = Path(cache_dir) / ACTIVITIES_CACHE_FNAME
-    if not cache_path.exists():
-        return
-    if files is None:
-        cache_path.unlink()
-        return
-    cache = pd.read_csv(cache_path).set_index("filename")
-    cache = cache.drop(index=[f for f in files if f in cache.index])
-    cache.sort_index().to_csv(cache_path)
 
 
 def load_strava_activities_raw(
@@ -248,7 +246,6 @@ def load_strava_activities(
         for date, tz in zip(calcs.index, calcs["timezone_used"])
     ]
 
-    # Construct the return DataFrame, converting units as appropriate
     df = pd.DataFrame()
     df["date"] = calcs["local_date"]
     df["description"] = csv["Activity Name"]
@@ -257,10 +254,10 @@ def load_strava_activities(
     df["commute"] = csv["Commute"]
     df["distance"] = csv["Distance"] * utils.KM_TO_MI
     df["elevation"] = csv["Elevation Gain"] * utils.M_TO_FT
-    df["elapsed_time"] = csv["Elapsed Time"]  # In seconds
-    df["moving_time"] = csv["Moving Time"]  # In seconds
-    df["max_heart_rate"] = calcs["max_heart_rate"]  # In beats per minute
-    df["estimated_ftp"] = calcs["estimated_ftp"]  # In watts
+    df["elapsed_time"] = pd.to_timedelta(csv["Elapsed Time"], unit="s")
+    df["moving_time"] = pd.to_timedelta(csv["Moving Time"], unit="s")
+    df["max_heart_rate"] = calcs["max_heart_rate"]
+    df["estimated_ftp"] = calcs["estimated_ftp"]
     df["filename"] = csv["Filename"]
 
     activities = df.set_index("date").sort_index()

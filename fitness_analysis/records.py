@@ -61,20 +61,6 @@ def parse_record_cached(
     return records
 
 
-def _ensure_record_cached(
-    filename: str | PathLike[str],
-    path: str | PathLike[str],
-    cache_dir: str | PathLike[str],
-) -> None:
-    """Pool worker wrapper around ``parse_record_cached``.
-
-    Returns None instead of the DataFrame so workers avoid pickling large
-    results back over IPC. Picklable and safe for use in multiprocessing pools.
-    """
-
-    parse_record_cached(filename, path, cache_dir)
-
-
 def warm_records_cache(
     files: Iterable[str | PathLike[str]],
     path: str | PathLike[str],
@@ -101,13 +87,13 @@ def warm_records_cache(
     if not cold:
         return
 
-    fn = partial(_ensure_record_cached, path=path, cache_dir=cache_dir)
+    fn = partial(parse_record_cached, path=path, cache_dir=cache_dir)
     if len(cold) > os.cpu_count() * 2:
         with ProcessPoolExecutor() as ex:
             list(ex.map(fn, cold))
     else:
         for f in cold:
-            _ensure_record_cached(f, path, cache_dir)
+            parse_record_cached(f, path, cache_dir)
 
 
 def invalidate_records_cache(

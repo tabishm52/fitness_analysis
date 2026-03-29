@@ -38,6 +38,63 @@ class CommuteConfig:
     morning_cutoff_hour: int = 12
 
 
+def _cache_df_to_dict(
+    cache: pd.DataFrame,
+) -> dict[str, list[dict[str, Any]]]:
+    """Convert a cache DataFrame to a filename-keyed dict of result lists.
+
+    Converts string columns to Timestamps/Timedeltas once at load time.
+    """
+
+    result: dict[str, list[dict[str, Any]]] = {}
+    for filename, group in cache.groupby(level=0):
+        result[filename] = [
+            {
+                "date": pd.Timestamp(r["date"]),
+                "description": r["description"],
+                "direction": r["direction"],
+                "distance": r["distance"],
+                "elapsed_time": pd.Timedelta(r["elapsed_time_s"], "s"),
+                "moving_time": (
+                    pd.Timedelta(r["moving_time_s"], "s")
+                    if pd.notna(r["moving_time_s"])
+                    else np.nan
+                ),
+                "filename": filename,
+            }
+            for _, r in group.iterrows()
+        ]
+    return result
+
+
+def invalidate_commutes_cache(
+    files: Iterable[str] | None,
+    cache_dir: str | PathLike[str],
+) -> None:
+    """Invalidate the commutes cache.
+
+    If ``files`` is None, deletes the entire cache file. Otherwise removes
+    only the entries for the given activity filenames, leaving the rest intact.
+
+    Args:
+        files: Activity filenames to remove. If None, the whole cache is
+            cleared.
+        cache_dir: Cache directory passed to ``load_commute_activities``.
+    """
+
+    cache_path = Path(cache_dir) / COMMUTES_CACHE_FNAME
+    if not cache_path.exists():
+        return
+
+    if files is None:
+        cache_path.unlink()
+        return
+
+    cache = pd.read_csv(cache_path, index_col="filename")
+    cache = cache[~cache.index.isin(list(files))]
+    cache.sort_index().to_csv(cache_path)
+
+
 def process_commute_file(
     activity: pd.Series,
     path: str | PathLike[str],
@@ -151,64 +208,6 @@ def process_commute_csv(
     }
 
 
-def _cache_df_to_dict(
-    cache: pd.DataFrame,
-) -> dict[str, list[dict[str, Any]]]:
-    """Convert a cache DataFrame to a filename-keyed dict of result lists.
-
-    Performs type conversions (strings to Timestamps/Timedeltas) once at load
-    time so per-filename lookups are O(1) dict gets with no further parsing.
-    """
-
-    result: dict[str, list[dict[str, Any]]] = {}
-    for filename, group in cache.groupby(level=0):
-        result[filename] = [
-            {
-                "date": pd.Timestamp(r["date"]),
-                "description": r["description"],
-                "direction": r["direction"],
-                "distance": r["distance"],
-                "elapsed_time": pd.Timedelta(r["elapsed_time_s"], "s"),
-                "moving_time": (
-                    pd.Timedelta(r["moving_time_s"], "s")
-                    if pd.notna(r["moving_time_s"])
-                    else np.nan
-                ),
-                "filename": filename,
-            }
-            for _, r in group.iterrows()
-        ]
-    return result
-
-
-def invalidate_commutes_cache(
-    files: Iterable[str] | None,
-    cache_dir: str | PathLike[str],
-) -> None:
-    """Invalidate the commutes cache.
-
-    If ``files`` is None, deletes the entire cache file. Otherwise removes
-    only the entries for the given activity filenames, leaving the rest intact.
-
-    Args:
-        files: Activity filenames to remove. If None, the whole cache is
-            cleared.
-        cache_dir: Cache directory passed to ``load_commute_activities``.
-    """
-
-    cache_path = Path(cache_dir) / COMMUTES_CACHE_FNAME
-    if not cache_path.exists():
-        return
-
-    if files is None:
-        cache_path.unlink()
-        return
-
-    cache = pd.read_csv(cache_path, index_col="filename")
-    cache = cache[~cache.index.isin(list(files))]
-    cache.to_csv(cache_path)
-
-
 def process_commutes(
     file_commutes: pd.DataFrame,
     path: str | PathLike[str],
@@ -245,31 +244,31 @@ def process_commutes(
         rows = list(file_commutes.iterrows())
         fn = partial(process_commute_file, path=path, config=config)
         with ProcessPoolExecutor() as ex:
-            splits_list = list(ex.map(fn, [activity for _, activity in rows]))
+            splits_list = list(ex.map(fn, (activity for _, activity in rows)))
         return {
             activity["Filename"]: splits
             for (_, activity), splits in zip(rows, splits_list)
         }
 
     cache_path = Path(cache_dir) / COMMUTES_CACHE_FNAME
-    cache_df: pd.DataFrame | None = (
+    cache_df = (
         pd.read_csv(cache_path, index_col="filename")
         if cache_path.exists()
         else None
     )
-    cache = _cache_df_to_dict(cache_df) if cache_df is not None else None
+    cache = _cache_df_to_dict(cache_df) if cache_df is not None else {}
 
-    cache_results = {f: (cache or {}).get(f) for f in files}
-    misses = [f for f, r in cache_results.items() if r is None]
+    results = {f: cache.get(f) for f in files}
+    misses = [f for f, r in results.items() if r is None]
 
     if not misses:
-        return cache_results
+        return results
 
     records.warm_records_cache(misses, path, cache_dir)
 
     miss_rows = file_commutes[file_commutes["Filename"].isin(misses)]
     for _, activity in miss_rows.iterrows():
-        cache_results[activity["Filename"]] = process_commute_file(
+        results[activity["Filename"]] = process_commute_file(
             activity, path, cache_dir, config
         )
 
@@ -288,19 +287,20 @@ def process_commutes(
                 ),
             }
             for f in misses
-            for split in (cache_results[f] or [])
+            for split in (results[f] or [])
         ],
         index=pd.Index(
-            [f for f in misses for split in (cache_results[f] or [])],
+            [f for f in misses for split in (results[f] or [])],
             name="filename",
         ),
     )
 
-    updated = pd.concat([c for c in [cache_df, new_rows] if c is not None])
-    updated = updated[updated.index.notna()]
+    updated = (
+        pd.concat([cache_df, new_rows]) if cache_df is not None else new_rows
+    )
     updated.sort_values("date").sort_index(kind="stable").to_csv(cache_path)
 
-    return cache_results
+    return results
 
 
 def load_commute_activities(
@@ -347,7 +347,7 @@ def load_commute_activities(
     file_commutes = commutes[file_mask]
     csv_commutes = commutes[~file_mask]
 
-    cache_results = process_commutes(file_commutes, path, cache_dir, config)
+    file_splits = process_commutes(file_commutes, path, cache_dir, config)
 
     tz_series = pd.Series(np.nan, index=csv_commutes.index, dtype=object)
     tz_series = tz_series.mask(tz_series.isna(), home_tz)
@@ -362,7 +362,7 @@ def load_commute_activities(
                 )
             )
         else:
-            results.extend(cache_results[fn] or [])
+            results.extend(file_splits[fn] or [])
 
     if not results:
         columns = [
