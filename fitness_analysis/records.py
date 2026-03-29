@@ -1,8 +1,10 @@
 """Parsing and caching of activity record files (FIT/TCX/GPX)."""
 
-import multiprocessing
+import os
 import shutil
 from collections.abc import Iterable
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from os import PathLike
 from pathlib import Path
 
@@ -16,6 +18,7 @@ parser = activity_parser.ActivityParser()
 
 
 def parse_record_cached(
+    filename: str | PathLike[str],
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None = None,
 ) -> pd.DataFrame:
@@ -27,24 +30,27 @@ def parse_record_cached(
     after Strava export. To invalidate, use ``invalidate_records_cache``.
 
     Args:
-        path: Activity file to parse.
+        filename: Activity filename (relative to ``path``).
+        path: Directory containing the activity file.
         cache_dir: Optional cache directory.
 
     Returns:
         Parsed records.
     """
 
+    full_path = Path(path) / filename
+
     if cache_dir is None:
-        records, _, _ = parser.parse(path)
+        records, _, _ = parser.parse(full_path)
         return records
 
     parquet_path = (
-        Path(cache_dir) / RECORDS_CACHE_DIR / (Path(path).name + ".parquet")
+        Path(cache_dir) / RECORDS_CACHE_DIR / (Path(filename).name + ".parquet")
     )
     if parquet_path.exists():
         return pd.read_parquet(parquet_path)
 
-    records, _, _ = parser.parse(path)
+    records, _, _ = parser.parse(full_path)
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Coerce object-dtype columns to string — mixed-type columns cannot be
@@ -56,6 +62,7 @@ def parse_record_cached(
 
 
 def _ensure_record_cached(
+    filename: str | PathLike[str],
     path: str | PathLike[str],
     cache_dir: str | PathLike[str],
 ) -> None:
@@ -65,7 +72,7 @@ def _ensure_record_cached(
     results back over IPC. Picklable and safe for use in multiprocessing pools.
     """
 
-    parse_record_cached(path, cache_dir)
+    parse_record_cached(filename, path, cache_dir)
 
 
 def warm_records_cache(
@@ -94,13 +101,13 @@ def warm_records_cache(
     if not cold:
         return
 
-    args = [(Path(path) / f, cache_dir) for f in cold]
-    if len(cold) > multiprocessing.cpu_count() * 2:
-        with multiprocessing.Pool() as p:
-            p.starmap(_ensure_record_cached, args)
+    fn = partial(_ensure_record_cached, path=path, cache_dir=cache_dir)
+    if len(cold) > os.cpu_count() * 2:
+        with ProcessPoolExecutor() as ex:
+            list(ex.map(fn, cold))
     else:
-        for a in args:
-            _ensure_record_cached(*a)
+        for f in cold:
+            _ensure_record_cached(f, path, cache_dir)
 
 
 def invalidate_records_cache(
@@ -153,14 +160,11 @@ def load_activity_records(
     """
 
     if cache_dir is None:
-        args = [(Path(path) / f, None) for f in files]
-        if len(files) > multiprocessing.cpu_count() * 2:
-            with multiprocessing.Pool() as p:
-                return p.starmap(parse_record_cached, args)
-        return [parse_record_cached(*a) for a in args]
+        with ProcessPoolExecutor() as ex:
+            return list(ex.map(partial(parse_record_cached, path=path), files))
 
     # Pass 1: pool cold files (raw FIT parse → write parquet)
     warm_records_cache(files, path, cache_dir)
 
     # Pass 2: read all from parquet serially
-    return [parse_record_cached(Path(path) / f, cache_dir) for f in files]
+    return [parse_record_cached(f, path, cache_dir) for f in files]

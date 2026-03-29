@@ -1,7 +1,8 @@
 """Functions for processing Strava bicycling activities."""
 
-import multiprocessing
 from collections.abc import Callable, Iterable
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from os import PathLike
 from pathlib import Path
 from typing import Any
@@ -120,15 +121,9 @@ def process_activities(
     """
 
     if not cache_dir:
-        if len(files) > multiprocessing.cpu_count() * 2:
-            with multiprocessing.Pool() as p:
-                args = ((f, path) for f in files)
-                return pd.DataFrame(
-                    p.starmap(process_one_activity, args), index=files.index
-                )
-        return pd.DataFrame(
-            (process_one_activity(f, path) for f in files), index=files.index
-        )
+        with ProcessPoolExecutor() as ex:
+            results = ex.map(partial(process_one_activity, path=path), files)
+        return pd.DataFrame(results, index=files.index)
 
     cache_path = Path(cache_dir) / ACTIVITIES_CACHE_FNAME
     if cache_path.exists():

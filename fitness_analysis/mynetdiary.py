@@ -1,10 +1,10 @@
 """Functions for processing MyNetDiary fitness data."""
 
-import dataclasses
 import hashlib
 import json
 import shutil
 from collections.abc import Callable
+from dataclasses import dataclass
 from os import PathLike
 from pathlib import Path
 
@@ -17,7 +17,7 @@ MND_CACHE_DIR = "mnd_data"
 MND_FINGERPRINT_FNAME = "_fingerprint.txt"
 
 
-@dataclasses.dataclass
+@dataclass
 class MndTuning:
     """Tuning parameters for ``load_mnd_data``.
 

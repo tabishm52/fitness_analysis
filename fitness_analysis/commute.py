@@ -1,8 +1,9 @@
 """Functions for processing Strava bicycling commutes."""
 
-import dataclasses
-import multiprocessing
 from collections.abc import Callable, Iterable
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
+from functools import partial
 from os import PathLike
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,7 @@ from . import records, strava, utils
 COMMUTES_CACHE_FNAME = "commutes_cache.csv"
 
 
-@dataclasses.dataclass
+@dataclass
 class CommuteConfig:
     """Configuration parameters for ``load_commute_activities``.
 
@@ -58,8 +59,9 @@ def process_commute_file(
         List of metric dicts, one per commute split.
     """
 
-    full_path = Path(path) / activity["Filename"]
-    activity_records = records.parse_record_cached(full_path, cache_dir)
+    activity_records = records.parse_record_cached(
+        activity["Filename"], path, cache_dir
+    )
 
     # Drop periods of inactivity, to cover the cases where the GPS was left
     # on all day rather than being paused between commute segments
@@ -241,17 +243,9 @@ def process_commutes(
 
     if cache_dir is None:
         rows = list(file_commutes.iterrows())
-        if len(rows) > multiprocessing.cpu_count() * 2:
-            with multiprocessing.Pool() as p:
-                splits_list = p.starmap(
-                    process_commute_file,
-                    [(activity, path, None, config) for _, activity in rows],
-                )
-        else:
-            splits_list = [
-                process_commute_file(activity, path, None, config)
-                for _, activity in rows
-            ]
+        fn = partial(process_commute_file, path=path, config=config)
+        with ProcessPoolExecutor() as ex:
+            splits_list = list(ex.map(fn, [activity for _, activity in rows]))
         return {
             activity["Filename"]: splits
             for (_, activity), splits in zip(rows, splits_list)
