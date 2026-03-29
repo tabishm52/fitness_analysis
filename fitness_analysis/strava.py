@@ -1,5 +1,6 @@
 """Functions for processing Strava bicycling activities."""
 
+import multiprocessing
 from collections.abc import Callable, Iterable
 from os import PathLike
 from pathlib import Path
@@ -95,16 +96,18 @@ def process_activities(
 ) -> pd.DataFrame:
     """Run calculations on a set of activities.
 
-    Computes per-activity metrics (timezone, heart rate, estimated FTP) using a
+    Computes per-activity metrics. When ``cache_dir`` is provided, uses a
     two-level caching strategy:
 
     1. **Activities cache** (``ACTIVITIES_CACHE_FNAME``): stores computed
        metrics. Activities found here are returned immediately with no
        further work.
     2. **Records cache** (parquet files, one per activity): stores the parsed
-       FIT/TCX/GPX records. For activities not in the activities cache, cold
-       files (no parquet yet) are parsed in parallel and written to the records
-       cache first, then metrics are computed serially from the warm cache.
+       FIT/TCX/GPX records. Warmed via ``warm_records_cache``, which
+       parallelizes parsing of cold files when the batch is large enough.
+
+    Without a cache directory, all files are parsed on every call, with
+    parallelization applied directly for large batches.
 
     Args:
         files: List of activity files to process.
@@ -116,34 +119,42 @@ def process_activities(
         Calculation results aligned to the index of ``files``.
     """
 
-    cache_path = Path(cache_dir) / ACTIVITIES_CACHE_FNAME if cache_dir else None
-    cache = None
-    if cache_path and cache_path.exists():
+    if not cache_dir:
+        if len(files) > multiprocessing.cpu_count() * 2:
+            with multiprocessing.Pool() as p:
+                args = ((f, path) for f in files)
+                return pd.DataFrame(
+                    p.starmap(process_one_activity, args), index=files.index
+                )
+        return pd.DataFrame(
+            (process_one_activity(f, path) for f in files), index=files.index
+        )
+
+    cache_path = Path(cache_dir) / ACTIVITIES_CACHE_FNAME
+    if cache_path.exists():
         cache = pd.read_csv(cache_path).set_index("filename")
+    else:
+        cache = None
 
     results = [check_activities_cache(f, cache) for f in files]
     misses = [f for f, r in zip(files, results) if r is None]
+    records.warm_records_cache(misses, path, cache_dir)
+    miss_map = dict(
+        zip(misses, (process_one_activity(f, path, cache_dir) for f in misses))
+    )
+    calcs = pd.DataFrame(
+        (r or miss_map[f] for f, r in zip(files, results)),
+        index=files.index,
+    )
 
-    if misses:
-        if cache_dir:
-            records.warm_records_cache(misses, path, cache_dir)
-
-        miss_map = {f: process_one_activity(f, path, cache_dir) for f in misses}
-        results = (
-            r if r is not None else miss_map[f] for f, r in zip(files, results)
-        )
-
-    calcs = pd.DataFrame(results, index=files.index)
-
-    if cache_path is not None:
-        # Merge new results with existing cache, drop NaN-filename rows and dups
-        if cache is not None:
-            new_cache = pd.concat([calcs.set_index("filename"), cache])
-        else:
-            new_cache = calcs.set_index("filename")
-        new_cache = new_cache[~new_cache.index.isna()]
-        new_cache = new_cache[~new_cache.index.duplicated()]
-        new_cache.sort_index().to_csv(cache_path)
+    # Merge new results with existing cache, drop NaN-filename rows and dups
+    if cache is not None:
+        new_cache = pd.concat([calcs.set_index("filename"), cache])
+    else:
+        new_cache = calcs.set_index("filename")
+    new_cache = new_cache[~new_cache.index.isna()]
+    new_cache = new_cache[~new_cache.index.duplicated()]
+    new_cache.sort_index().to_csv(cache_path)
 
     return calcs
 
