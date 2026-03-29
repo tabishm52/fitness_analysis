@@ -1,6 +1,10 @@
 """Analysis tools for fitness activity data from Strava and MyNetDiary."""
 
-from .commute import load_commute_activities
+from .commute import (
+    CommuteConfig,
+    invalidate_commutes_cache,
+    load_commute_activities,
+)
 from .mynetdiary import (
     MndTuning,
     eer_female,
@@ -20,7 +24,9 @@ __all__ = [
     "MndTuning",
     "eer_female",
     "eer_male",
+    "CommuteConfig",
     "invalidate_activities_cache",
+    "invalidate_commutes_cache",
     "invalidate_mnd_cache",
     "invalidate_records_cache",
     "load_activity_records",
