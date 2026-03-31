@@ -16,6 +16,11 @@ ACTIVITIES_FNAME = "activities.csv"
 ACTIVITIES_CACHE_FNAME = "activities_cache.csv"
 
 
+# ---------------------------------------------------------------------------
+# Cache management
+# ---------------------------------------------------------------------------
+
+
 def _cache_df_to_dict(cache: pd.DataFrame) -> dict[str, dict[str, Any]]:
     """Convert a cache DataFrame to a filename-keyed dict of result dicts."""
 
@@ -57,6 +62,11 @@ def invalidate_activities_cache(
     cache = pd.read_csv(cache_path, index_col="filename")
     cache = cache[~cache.index.isin(list(files))]
     cache.sort_index().to_csv(cache_path)
+
+
+# ---------------------------------------------------------------------------
+# Activity processing
+# ---------------------------------------------------------------------------
 
 
 def process_activity_file(
@@ -178,6 +188,11 @@ def process_activities(
     return calcs
 
 
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
+
+
 def load_strava_activities_raw(
     path: str | PathLike[str],
 ) -> pd.DataFrame:
@@ -200,6 +215,11 @@ def load_strava_activities_raw(
         csv["Activity Date"], format="%b %d, %Y, %I:%M:%S %p"
     )
     return csv.set_index("Activity Date")
+
+
+# ---------------------------------------------------------------------------
+# Top-level entry point
+# ---------------------------------------------------------------------------
 
 
 def load_strava_activities(

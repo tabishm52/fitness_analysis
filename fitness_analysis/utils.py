@@ -24,33 +24,9 @@ CAL_PER_LB_WEEK = _FAT_KCAL_PER_LB / 7
 tz_finder = timezonefinder.TimezoneFinder()
 
 
-def ewm_min_periods_from_halflife(
-    halflife: str | pd.Timedelta,
-    coverage: float,
-    floor: int = 2,
-) -> int:
-    """Derive EWM ``min_periods`` from half-life and target weight coverage.
-
-    Args:
-        halflife: EWM half-life (for example, ``'3D'``).
-        coverage: Target cumulative EWM weight mass in ``(0, 1)``.
-        floor: Minimum returned value.
-
-    Returns:
-        Integer ``min_periods`` aligned to the specified half-life.
-    """
-
-    if not 0 < coverage < 1:
-        raise ValueError("coverage must be in (0, 1)")
-
-    halflife_days = pd.to_timedelta(halflife) / pd.Timedelta("1D")
-    if halflife_days <= 0:
-        raise ValueError("halflife must be positive")
-
-    daily_decay = 0.5 ** (1 / halflife_days)
-    periods = int(np.ceil(np.log(1 - coverage) / np.log(daily_decay)))
-
-    return max(floor, periods)
+# ---------------------------------------------------------------------------
+# Piecewise linear fitting
+# ---------------------------------------------------------------------------
 
 
 def _per_unit_us_factor(units: str) -> np.uint64:
@@ -149,6 +125,40 @@ def piecewise_fit_with_breaks(
     return _pwlf_fit(series.dropna(), units, breaks=breaks)
 
 
+# ---------------------------------------------------------------------------
+# Averaging and rate estimation helpers
+# ---------------------------------------------------------------------------
+
+
+def ewm_min_periods_from_halflife(
+    halflife: str | pd.Timedelta,
+    coverage: float,
+    floor: int = 2,
+) -> int:
+    """Derive EWM ``min_periods`` from half-life and target weight coverage.
+
+    Args:
+        halflife: EWM half-life (for example, ``'3D'``).
+        coverage: Target cumulative EWM weight mass in ``(0, 1)``.
+        floor: Minimum returned value.
+
+    Returns:
+        Integer ``min_periods`` aligned to the specified half-life.
+    """
+
+    if not 0 < coverage < 1:
+        raise ValueError("coverage must be in (0, 1)")
+
+    halflife_days = pd.to_timedelta(halflife) / pd.Timedelta("1D")
+    if halflife_days <= 0:
+        raise ValueError("halflife must be positive")
+
+    daily_decay = 0.5 ** (1 / halflife_days)
+    periods = int(np.ceil(np.log(1 - coverage) / np.log(daily_decay)))
+
+    return max(floor, periods)
+
+
 def rolling_linear_rate(
     series: pd.Series,
     window: int,
@@ -196,6 +206,11 @@ def rolling_linear_rate(
 
     roller = series.rolling(window, min_periods=min_periods, center=center)
     return roller.apply(_slope, raw=True)
+
+
+# ---------------------------------------------------------------------------
+# GPS and activity helpers
+# ---------------------------------------------------------------------------
 
 
 def infer_timezone(records: pd.DataFrame) -> str | None:

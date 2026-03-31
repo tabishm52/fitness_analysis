@@ -38,6 +38,11 @@ class CommuteConfig:
     morning_cutoff_hour: int = 12
 
 
+# ---------------------------------------------------------------------------
+# Cache management
+# ---------------------------------------------------------------------------
+
+
 def _cache_df_to_dict(
     cache: pd.DataFrame,
 ) -> dict[str, list[dict[str, Any]]]:
@@ -93,6 +98,11 @@ def invalidate_commutes_cache(
     cache = pd.read_csv(cache_path, index_col="filename")
     cache = cache[~cache.index.isin(list(files))]
     cache.sort_index().to_csv(cache_path)
+
+
+# ---------------------------------------------------------------------------
+# Activity processing
+# ---------------------------------------------------------------------------
 
 
 def process_commute_file(
@@ -301,6 +311,11 @@ def process_commutes(
     updated.sort_values("date").sort_index(kind="stable").to_csv(cache_path)
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Top-level entry point
+# ---------------------------------------------------------------------------
 
 
 def load_commute_activities(

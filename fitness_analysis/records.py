@@ -17,6 +17,11 @@ RECORDS_CACHE_DIR = "activity_records"
 parser = activity_parser.ActivityParser()
 
 
+# ---------------------------------------------------------------------------
+# Single file parsing
+# ---------------------------------------------------------------------------
+
+
 def parse_record_cached(
     filename: str | PathLike[str],
     path: str | PathLike[str],
@@ -59,6 +64,11 @@ def parse_record_cached(
     records.astype({col: "string" for col in obj_cols}).to_parquet(parquet_path)
 
     return records
+
+
+# ---------------------------------------------------------------------------
+# Batch operations
+# ---------------------------------------------------------------------------
 
 
 def warm_records_cache(
@@ -122,6 +132,11 @@ def invalidate_records_cache(
         parquet_path = parquet_dir / (Path(f).name + ".parquet")
         if parquet_path.exists():
             parquet_path.unlink()
+
+
+# ---------------------------------------------------------------------------
+# Top-level entry point
+# ---------------------------------------------------------------------------
 
 
 def load_activity_records(

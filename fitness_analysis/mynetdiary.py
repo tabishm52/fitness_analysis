@@ -32,6 +32,11 @@ class MndTuning:
     rate_window_days: int = 28
 
 
+# ---------------------------------------------------------------------------
+# Excel loading and cache
+# ---------------------------------------------------------------------------
+
+
 def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
     """Loads and merges data from all Excel files in a directory.
 
@@ -133,6 +138,11 @@ def invalidate_mnd_cache(cache_dir: str | PathLike[str]) -> None:
         shutil.rmtree(cache_path)
 
 
+# ---------------------------------------------------------------------------
+# Estimated energy requirements
+# ---------------------------------------------------------------------------
+
+
 def eer_male(
     weight: pd.Series,
     height: float,
@@ -183,6 +193,11 @@ def eer_female(
     # Perform female EER calculation per MyNetDiary
     # https://www.mynetdiary.com/supportArticle.do?articleId=328
     return 354 - 6.91 * age + pa * (4.25 * weight + 18.44 * height)
+
+
+# ---------------------------------------------------------------------------
+# Top-level entry point
+# ---------------------------------------------------------------------------
 
 
 def load_mnd_data(
