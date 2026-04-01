@@ -1,6 +1,5 @@
 """Parsing and caching of activity record files (FIT/TCX/GPX)."""
 
-import os
 import shutil
 from collections.abc import Iterable
 from concurrent.futures import ProcessPoolExecutor
@@ -12,6 +11,9 @@ import activity_parser
 import pandas as pd
 
 RECORDS_CACHE_DIR = "activity_records"
+
+# Minimum cold files to justify ProcessPoolExecutor startup overhead.
+PARALLEL_MIN_FILES = 30
 
 # Global parser shared across the fitness_analysis module
 parser = activity_parser.ActivityParser()
@@ -98,7 +100,7 @@ def warm_records_cache(
         return
 
     fn = partial(parse_record_cached, path=path, cache_dir=cache_dir)
-    if len(cold) > os.cpu_count() * 2:
+    if len(cold) >= PARALLEL_MIN_FILES:
         with ProcessPoolExecutor() as ex:
             list(ex.map(fn, cold))
     else:

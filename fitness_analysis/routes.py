@@ -1,6 +1,5 @@
 """GPS route clustering for bicycle activities."""
 
-import os
 from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
@@ -14,8 +13,10 @@ from sklearn.cluster import DBSCAN
 
 from . import records
 
-# Pairs/core below which serial beats ProcessPoolExecutor. Tuned on M1 Pro.
-PARALLEL_PAIRS_PER_CPU = 2500
+# Parallel processing: min_pairs is where pool startup overhead is justified;
+# chunk_size balances IPC overhead vs load balance. (tuned on Apple M1 Pro)
+PARALLEL_MIN_PAIRS = 30000
+PARALLEL_CHUNK_SIZE = 50
 
 
 @dataclass
@@ -29,7 +30,7 @@ class RouteClusterConfig:
         partition_eps_m: DBSCAN eps (metres) for grouping activities by
             start/end location into independent partitions.
         similarity_eps: DBSCAN eps for route similarity - fraction of mean
-            route length (0.05 = 5% deviation allowed).
+            route length (e.g. 0.02 = 2% deviation allowed).
         min_samples: DBSCAN ``min_samples`` for route clustering.
         length_ratio_max: Pre-filter threshold - skip Fréchet for pairs whose
             route lengths differ by more than this factor.
@@ -345,9 +346,15 @@ def partition_and_cluster(
         for members in valid_partitions:
             yield from route_pairs([valid_routes[i] for i in members], config)
 
-    if n_pairs_total > os.cpu_count() * PARALLEL_PAIRS_PER_CPU:
+    if n_pairs_total >= PARALLEL_MIN_PAIRS:
         with ProcessPoolExecutor() as ex:
-            all_results = list(ex.map(_frechet_pair_packed, all_pairs()))
+            all_results = list(
+                ex.map(
+                    _frechet_pair_packed,
+                    all_pairs(),
+                    chunksize=PARALLEL_CHUNK_SIZE,
+                )
+            )
     else:
         all_results = [frechet_pair(*p) for p in all_pairs()]
 
