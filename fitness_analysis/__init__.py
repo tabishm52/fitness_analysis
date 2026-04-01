@@ -14,16 +14,21 @@ from .mynetdiary import (
 )
 from .records import invalidate_records_cache, load_activity_records
 from .routes import RouteClusterConfig, cluster_routes
-from .strava import invalidate_activities_cache, load_strava_activities
+from .strava import (
+    ActivitiesConfig,
+    invalidate_activities_cache,
+    load_strava_activities,
+)
 from .utils import piecewise_fit, piecewise_fit_with_breaks
 
 __all__ = [
-    "MndTuning",
-    "eer_female",
-    "eer_male",
+    "ActivitiesConfig",
     "CommuteConfig",
+    "MndTuning",
     "RouteClusterConfig",
     "cluster_routes",
+    "eer_female",
+    "eer_male",
     "invalidate_activities_cache",
     "invalidate_commutes_cache",
     "invalidate_mnd_cache",

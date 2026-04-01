@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Iterable
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 from functools import partial
 from os import PathLike
 from pathlib import Path
@@ -14,6 +15,24 @@ from . import records, utils
 
 ACTIVITIES_FNAME = "activities.csv"
 ACTIVITIES_CACHE_FNAME = "activities_cache.csv"
+
+
+@dataclass
+class ActivitiesConfig:
+    """Configuration parameters for ``load_strava_activities``.
+
+    Attributes:
+        ftp_window_s: Rolling window in seconds for FTP estimation from power
+            data.
+        ftp_factor: Fraction of the rolling-window mean power used as the FTP
+            estimate. The standard 20-minute protocol uses 0.95.
+        weekly_anchor: Pandas offset alias for weekly resampling. ``'W-SUN'``
+            matches Strava's weekly metrics.
+    """
+
+    ftp_window_s: int = 20 * 60
+    ftp_factor: float = 0.95
+    weekly_anchor: str = "W-SUN"
 
 
 # ---------------------------------------------------------------------------
@@ -72,12 +91,12 @@ def invalidate_activities_cache(
 def process_activity_file(
     filename: str | float,
     path: str | PathLike[str],
-    cache_dir: str | PathLike[str] | None = None,
+    cache_dir: str | PathLike[str] | None,
+    config: ActivitiesConfig,
 ) -> dict[str, Any]:
     """Parse a single activity file and compute metrics."""
 
-    full_path = Path(path) / filename
-    activity_records = records.parse_record_cached(full_path, cache_dir)
+    activity_records = records.parse_record_cached(filename, path, cache_dir)
 
     timezone = utils.infer_timezone(activity_records)
     has_location = timezone is not None
@@ -90,15 +109,14 @@ def process_activity_file(
         max_hr = np.nan
 
     if "power" in activity_records.columns:
-        # 20-minute mean power as a proxy for FTP
         estimated_ftp = (
             activity_records["power"]
             .resample("s")
             .ffill()
-            .rolling(20 * 60)
+            .rolling(config.ftp_window_s)
             .mean()
             .max()
-        )
+        ) * config.ftp_factor
     else:
         estimated_ftp = np.nan
 
@@ -114,7 +132,8 @@ def process_activity_file(
 def process_activities(
     files: pd.Series,
     path: str | PathLike[str],
-    cache_dir: str | PathLike[str] | None = None,
+    cache_dir: str | PathLike[str] | None,
+    config: ActivitiesConfig,
 ) -> pd.DataFrame:
     """Run calculations on a set of activities.
 
@@ -143,7 +162,15 @@ def process_activities(
 
     if cache_dir is None:
         with ProcessPoolExecutor() as ex:
-            results = ex.map(partial(process_activity_file, path=path), files)
+            results = ex.map(
+                partial(
+                    process_activity_file,
+                    path=path,
+                    cache_dir=None,
+                    config=config,
+                ),
+                files,
+            )
         return pd.DataFrame(results, index=files.index)
 
     cache_path = Path(cache_dir) / ACTIVITIES_CACHE_FNAME
@@ -170,9 +197,9 @@ def process_activities(
         return pd.DataFrame(results, index=files.index)
 
     records.warm_records_cache(misses, path, cache_dir)
-    miss_map = dict(
-        zip(misses, (process_activity_file(f, path, cache_dir) for f in misses))
-    )
+    miss_map = {
+        f: process_activity_file(f, path, cache_dir, config) for f in misses
+    }
 
     calcs = pd.DataFrame(
         (r if r is not None else miss_map[f] for f, r in zip(files, results)),
@@ -226,6 +253,7 @@ def load_strava_activities(
     path: str | PathLike[str],
     home_tz: Callable[[pd.Series], pd.Series | str] | str,
     cache_dir: str | PathLike[str] | None = None,
+    config: ActivitiesConfig | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load bicycling activity data from a Strava export directory.
 
@@ -241,6 +269,7 @@ def load_strava_activities(
             that accepts a Series and returns per-activity timezone values.
         cache_dir: Optional directory for cached results. If omitted, activity
             files are parsed on every call.
+        config: Optional configuration. Defaults to ``ActivitiesConfig()``.
 
     Returns:
         Tuple of (activities, weekly_sums). ``activities`` contains one row per
@@ -249,8 +278,11 @@ def load_strava_activities(
         totals resampled to weekly (Sunday) buckets.
     """
 
+    if config is None:
+        config = ActivitiesConfig()
+
     csv = load_strava_activities_raw(path)
-    calcs = process_activities(csv["Filename"], path, cache_dir)
+    calcs = process_activities(csv["Filename"], path, cache_dir, config)
 
     # Infer activities that were performed on a stationary trainer
     calcs["trainer"] = (csv["Activity Type"] == "Virtual Ride") | (
@@ -283,6 +315,8 @@ def load_strava_activities(
     activities = df.set_index("date").sort_index()
 
     weekly_metrics = ["distance", "elevation", "elapsed_time", "moving_time"]
-    weekly_sums = activities[weekly_metrics].resample("W-SUN").sum()
+    weekly_sums = (
+        activities[weekly_metrics].resample(config.weekly_anchor).sum()
+    )
 
     return activities, weekly_sums
