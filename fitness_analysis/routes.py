@@ -34,6 +34,8 @@ class RouteClusterConfig:
         min_samples: DBSCAN ``min_samples`` for route clustering.
         length_ratio_max: Pre-filter threshold - skip Fréchet for pairs whose
             route lengths differ by more than this factor.
+        filename_col: Column name for activity filenames.
+        name_col: Column name for activity descriptions.
     """
 
     points_per_km: float = 1.0
@@ -43,6 +45,14 @@ class RouteClusterConfig:
     similarity_eps: float = 0.02
     min_samples: int = 2
     length_ratio_max: float = 1.2
+    filename_col: str = "filename"
+    name_col: str = "description"
+
+
+# Pre-built config for raw Strava CSV column names (used internally)
+ROUTE_CLUSTER_CONFIG_RAW = RouteClusterConfig(
+    filename_col="Filename", name_col="Activity Name"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +127,6 @@ def load_raw_coords(
 
     Returns:
         Tuple of:
-
         - ``raw_coords``: One entry per record - either ``(lat, lon)`` numpy
           arrays or ``None`` if the record has no GPS columns.
         - ``utm_zone``: ``(zone_number, zone_letter)`` derived from the median
@@ -156,7 +165,7 @@ def load_raw_coords(
 
 
 def extract_route_features(
-    gps_activities: pd.DataFrame,
+    activities: pd.DataFrame,
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None,
     config: RouteClusterConfig,
@@ -164,21 +173,20 @@ def extract_route_features(
     """Load GPS records and resample all routes to UTM feature dicts.
 
     Args:
-        gps_activities: Subset of the activity DataFrame with ``filename``
-            present and ``trainer`` False.
+        activities: Subset of the activity DataFrame with filenames present.
+            Activities with no GPS data are excluded from the valid output.
         path: Strava export directory.
         cache_dir: Optional records parquet cache directory.
         config: Clustering configuration.
 
     Returns:
-        Tuple of ``(valid_idx, valid_routes)`` where ``valid_idx`` are the
-        original activity index values and ``valid_routes`` are the
-        corresponding ``(route_xy, route_length_m)`` tuples from
-        ``resample_route``.
+        Tuple of:
+        - ``valid_idx``: the original activity index values.
+        - ``valid_routes`` the corresponding outputs from ``resample_route``.
     """
 
     record_list = records.load_activity_records(
-        gps_activities["filename"], path, cache_dir
+        activities[config.filename_col], path, cache_dir
     )
     raw_coords, utm_zone = load_raw_coords(record_list)
 
@@ -193,7 +201,7 @@ def extract_route_features(
         for entry in raw_coords
     ]
 
-    gps_idx = list(gps_activities.index)
+    gps_idx = list(activities.index)
     valid_idx = [idx for idx, r in zip(gps_idx, routes) if r is not None]
     valid_routes = [r for r in routes if r is not None]
     return valid_idx, valid_routes
@@ -311,14 +319,13 @@ def partition_and_cluster(
     batch when the total pair count justifies it.
 
     Args:
-        valid_idx: Activity index values corresponding to each feature dict.
-        valid_routes: ``(route_xy, route_length_m)`` tuples from
-            ``resample_route``.
+        valid_idx: Activity index values corresponding to each route.
+        valid_routes: Resampled routes from ``resample_route``.
         config: Clustering configuration.
 
     Returns:
-        List of clusters, each cluster being a list of activity index values.
-        Ordered by cluster size descending (largest first).
+        Activity index values grouped into clusters, ordered by cluster size
+        descending (largest first).
     """
 
     start_pts = np.array([r[0][0] for r in valid_routes])
@@ -391,25 +398,26 @@ def cluster_routes(
     cache_dir: str | PathLike[str] | None = None,
     config: RouteClusterConfig | None = None,
 ) -> pd.DataFrame:
-    """Cluster bicycle activities by GPS route similarity.
+    """Cluster bicycle activities by GPS route similarity or activity name.
 
-    Identifies groups of rides that follow the same route. Activities without
-    GPS data (trainer rides, activities with no location) receive NaN cluster
-    IDs and are not clustered.
+    Activities with GPS data are clustered by discrete Fréchet distance.
+    File-based activities that yield no GPS data (e.g. trainer rides on a
+    non-simulated course) are clustered by activity description instead.
+    Activities with no file receive ``pd.NA`` cluster IDs and are not clustered.
 
-    The pipeline:
+    All clusters share a single ID space ordered by size (0 = most frequent).
+
+    The GPS pipeline:
     1. Resamples each GPS route to a fixed point count (proportional to
        route length) in UTM coordinates.
     2. Partitions activities into independent groups based on shared
        start and end locations (DBSCAN with ``partition_eps_m``).
     3. Computes pairwise discrete Fréchet distances within each partition.
     4. Clusters within each partition via DBSCAN on the distance matrix.
-    5. Assigns global ``cluster_id`` values ordered by cluster size
-       (0 = most frequent route).
 
     Args:
-        activities: Activity DataFrame from ``load_strava_activities``. Must
-            have ``filename``, ``trainer``, and ``description`` columns.
+        activities: Activity DataFrame. Must have columns matching
+            ``config.filename_col`` and ``config.name_col``.
         path: Strava export directory (passed to record loading).
         cache_dir: Optional cache directory for the records parquet cache.
             If omitted, activity files are parsed on every call.
@@ -417,9 +425,8 @@ def cluster_routes(
 
     Returns:
         DataFrame with the same index as ``activities`` containing:
-
         - ``cluster_id``: Integer cluster ID (0 = most frequent route),
-          ``pd.NA`` for unmatched or GPS-less activities.
+          ``pd.NA`` for unmatched or no-file activities.
         - ``cluster_name``: Mode of activity names within the cluster,
           ``None`` for unmatched activities.
     """
@@ -427,26 +434,42 @@ def cluster_routes(
     if config is None:
         config = RouteClusterConfig()
 
-    gps_mask = activities["filename"].notna() & ~activities["trainer"]
+    has_file = activities[config.filename_col].notna()
     valid_idx, valid_routes = extract_route_features(
-        activities[gps_mask], path, cache_dir, config
+        activities[has_file], path, cache_dir, config
     )
 
     cluster_id_arr = pd.array([pd.NA] * len(activities), dtype=pd.Int64Dtype())
     cluster_name_arr = np.full(len(activities), None, dtype=object)
 
-    if not valid_routes:
-        return pd.DataFrame(
-            {"cluster_id": cluster_id_arr, "cluster_name": cluster_name_arr},
-            index=activities.index,
-        )
+    # GPS clustering, named by modal activity description
+    gps_clusters = (
+        partition_and_cluster(valid_idx, valid_routes, config)
+        if valid_routes
+        else []
+    )
+    gps_clusters_named = [
+        (activities.loc[idx_list, config.name_col].mode().iat[0], idx_list)
+        for idx_list in gps_clusters
+    ]
 
-    all_clusters = partition_and_cluster(valid_idx, valid_routes, config)
+    # Name-based clustering of activities that yielded no GPS data
+    no_gps_mask = has_file & ~activities.index.isin(valid_idx)
+    desc = activities.loc[no_gps_mask, config.name_col].dropna()
+    name_clusters = [
+        (name, list(group.index))
+        for name, group in desc.groupby(desc)
+        if len(group) >= config.min_samples
+    ]
 
+    # Merge and renumber by size (0 = most frequent)
     pos_of = {idx: pos for pos, idx in enumerate(activities.index)}
-    for global_id, idx_list in enumerate(all_clusters):
-        mode = activities.loc[idx_list, "description"].mode()
-        cluster_name = mode.iloc[0] if len(mode) > 0 else None
+    all_clusters = sorted(
+        gps_clusters_named + name_clusters,
+        key=lambda x: len(x[1]),
+        reverse=True,
+    )
+    for global_id, (cluster_name, idx_list) in enumerate(all_clusters):
         for act_idx in idx_list:
             cluster_id_arr[pos_of[act_idx]] = global_id
             cluster_name_arr[pos_of[act_idx]] = cluster_name
