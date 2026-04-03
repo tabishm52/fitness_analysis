@@ -2,7 +2,7 @@
 
 from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import PathLike
 
 import numpy as np
@@ -34,8 +34,6 @@ class RouteClusterConfig:
         min_samples: DBSCAN ``min_samples`` for route clustering.
         length_ratio_max: Pre-filter threshold - skip Fréchet for pairs whose
             route lengths differ by more than this factor.
-        filename_col: Column name for activity filenames.
-        name_col: Column name for activity descriptions.
     """
 
     points_per_km: float = 1.0
@@ -45,14 +43,18 @@ class RouteClusterConfig:
     similarity_eps: float = 0.02
     min_samples: int = 2
     length_ratio_max: float = 1.2
-    filename_col: str = "filename"
-    name_col: str = "description"
 
+    # If True, cluster_routes() uses Strava CSV column names. If False,
+    # cluster_routes() uses column names from load_strava_activities().
+    raw_csv: bool = field(default=False, init=False, repr=False)
 
-# Pre-built config for raw Strava CSV column names (used internally)
-ROUTE_CLUSTER_CONFIG_RAW = RouteClusterConfig(
-    filename_col="Filename", name_col="Activity Name"
-)
+    @property
+    def filename_col(self) -> str:
+        return "Filename" if self.raw_csv else "filename"
+
+    @property
+    def name_col(self) -> str:
+        return "Activity Name" if self.raw_csv else "description"
 
 
 # ---------------------------------------------------------------------------

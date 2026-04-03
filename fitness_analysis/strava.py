@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from . import records, routes, utils
-from .routes import ROUTE_CLUSTER_CONFIG_RAW, RouteClusterConfig
+from .routes import RouteClusterConfig
 
 ACTIVITIES_FNAME = "activities.csv"
 ACTIVITIES_CACHE_FNAME = "activities_cache.csv"
@@ -37,8 +37,12 @@ class ActivitiesConfig:
     ftp_factor: float = 0.95
     weekly_anchor: str = "W-SUN"
     clustering: RouteClusterConfig | None = field(
-        default_factory=lambda: ROUTE_CLUSTER_CONFIG_RAW
+        default_factory=RouteClusterConfig
     )
+
+    def __post_init__(self) -> None:
+        if self.clustering is not None:
+            self.clustering.raw_csv = True
 
 
 # ---------------------------------------------------------------------------
