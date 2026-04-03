@@ -478,3 +478,56 @@ def cluster_routes(
         {"cluster_id": cluster_id_arr, "cluster_name": cluster_name_arr},
         index=activities.index,
     )
+
+
+def cluster_routes_cached(
+    activities: pd.DataFrame,
+    path: str | PathLike[str],
+    cache_dir: str | PathLike[str] | None = None,
+    cache_df: pd.DataFrame | None = None,
+    config: RouteClusterConfig = RouteClusterConfig(),
+) -> tuple[pd.DataFrame, bool]:
+    """Cluster bicycle routes, using a pre-loaded cache when provided.
+
+    Cache hit condition: ``cache_df`` contains ``cluster_id`` and
+    ``cluster_name`` columns with entries for every file-based activity in
+    ``activities``. Any missing filename triggers a full recompute, as does
+    passing ``cache_df=None``. Cache persistence is the caller's
+    responsibility.
+
+    Args:
+        activities: Activity DataFrame. Must have columns matching
+            ``config.filename_col`` and ``config.name_col``.
+        path: Strava export directory (passed to ``cluster_routes``).
+        cache_dir: Records cache directory (passed to ``cluster_routes``).
+        cache_df: Already-loaded activities cache indexed by filename.
+        config: Clustering configuration.
+
+    Returns:
+        Tuple of:
+        - ``clusters``: ``cluster_id`` and ``cluster_name`` columns with the
+          same index as ``activities``.
+        - ``cache_miss``: True when clustering was recomputed.
+    """
+
+    if cache_df is None:
+        return cluster_routes(activities, path, cache_dir, config), True
+
+    filenames = activities.loc[
+        activities[config.filename_col].notna(), config.filename_col
+    ]
+
+    if (
+        "cluster_id" in cache_df.columns
+        and "cluster_name" in cache_df.columns
+        and filenames.isin(cache_df.index).all()
+    ):
+        fn = activities[config.filename_col]
+        cluster_id = fn.map(cache_df["cluster_id"]).astype(pd.Int64Dtype())
+        cluster_name = fn.map(cache_df["cluster_name"])
+        return pd.DataFrame(
+            {"cluster_id": cluster_id, "cluster_name": cluster_name},
+            index=activities.index,
+        ), False
+
+    return cluster_routes(activities, path, cache_dir, config), True
