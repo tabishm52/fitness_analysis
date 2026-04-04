@@ -12,7 +12,11 @@ from .mynetdiary import (
     invalidate_mnd_cache,
     load_mnd_data,
 )
-from .records import invalidate_records_cache, load_activity_records
+from .records import (
+    invalidate_records_cache,
+    load_activity_coords,
+    load_activity_records,
+)
 from .routes import RouteClusterConfig, cluster_routes
 from .strava import (
     ActivitiesConfig,
@@ -33,6 +37,7 @@ __all__ = [
     "invalidate_commutes_cache",
     "invalidate_mnd_cache",
     "invalidate_records_cache",
+    "load_activity_coords",
     "load_activity_records",
     "load_commute_activities",
     "load_mnd_data",

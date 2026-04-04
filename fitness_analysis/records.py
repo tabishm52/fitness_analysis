@@ -68,6 +68,39 @@ def parse_record_cached(
     return records
 
 
+def parse_coords_cached(
+    filename: str | PathLike[str],
+    path: str | PathLike[str],
+    cache_dir: str | PathLike[str] | None = None,
+) -> pd.DataFrame | None:
+    """Parse a FIT/TCX/GPX file and return trimmed lat/lon columns.
+
+    Worker-safe: picklable and suitable for use inside multiprocessing pools.
+
+    Args:
+        filename: Activity filename (relative to ``path``).
+        path: Directory containing the activity file.
+        cache_dir: Optional cache directory.
+
+    Returns:
+        Trimmed ``latitude``/``longitude`` data, or ``None`` if GPS data are
+        absent.
+    """
+
+    rec = parse_record_cached(filename, path, cache_dir)
+
+    if "latitude" not in rec.columns:
+        return None
+
+    lat = rec["latitude"]
+    first = lat.first_valid_index()
+    if first is None:
+        return None
+
+    last = lat.last_valid_index()
+    return rec.loc[first:last, ["latitude", "longitude"]].reset_index(drop=True)
+
+
 # ---------------------------------------------------------------------------
 # Batch operations
 # ---------------------------------------------------------------------------
@@ -137,7 +170,7 @@ def invalidate_records_cache(
 
 
 # ---------------------------------------------------------------------------
-# Top-level entry point
+# Top-level entry points
 # ---------------------------------------------------------------------------
 
 
@@ -148,10 +181,7 @@ def load_activity_records(
 ) -> list[pd.DataFrame]:
     """Load parsed records for a set of activity files.
 
-    Parses each file using a Parquet cache when available. When a cache
-    directory is provided, cold files (no parquet yet) are pooled for
-    parallel parsing, then all files are read serially from the warm cache.
-    Without a cache directory, parsing is pooled directly for large batches.
+    Parses each file using the records parquet cache when available.
 
     Args:
         files: Activity filenames (relative to ``path``).
@@ -171,3 +201,33 @@ def load_activity_records(
 
     # Pass 2: read all from parquet serially
     return [parse_record_cached(f, path, cache_dir) for f in files]
+
+
+def load_activity_coords(
+    files: pd.Series,
+    path: str | PathLike[str],
+    cache_dir: str | PathLike[str] | None = None,
+) -> list[pd.DataFrame | None]:
+    """Load trimmed lat/lon data for a set of activity files.
+
+    Parses each file using the records parquet cache when available.
+
+    Args:
+        files: Activity filenames (relative to ``path``).
+        path: Directory containing the activity files.
+        cache_dir: Optional cache directory.
+
+    Returns:
+        Trimmed ``latitude``/``longitude`` data, one per file, in the same
+        order as ``files``. ``None`` for files with no GPS data.
+    """
+
+    if cache_dir is None:
+        with ProcessPoolExecutor() as ex:
+            return list(ex.map(partial(parse_coords_cached, path=path), files))
+
+    # Pass 1: pool cold files (raw FIT parse → write parquet)
+    warm_records_cache(files, path, cache_dir)
+
+    # Pass 2: read all from parquet serially
+    return [parse_coords_cached(f, path, cache_dir) for f in files]
