@@ -1,6 +1,7 @@
 """GPS route clustering for bicycle activities."""
 
-from collections.abc import Iterator
+import itertools
+from collections.abc import Iterable, Iterator
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from os import PathLike
@@ -124,6 +125,7 @@ def resample_route(
 
 def extract_route_features(
     activities: pd.DataFrame,
+    segments: Iterable[int | None] | None,
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None,
     config: RouteClusterConfig,
@@ -133,6 +135,8 @@ def extract_route_features(
     Args:
         activities: Subset of the activity DataFrame with filenames present.
             Activities with no GPS data are excluded from the valid output.
+        segments: Per-activity segment indices, or ``None`` to treat all
+            activities as whole-file.
         path: Strava export directory.
         cache_dir: Optional records parquet cache directory.
         config: Clustering configuration.
@@ -145,7 +149,7 @@ def extract_route_features(
     """
 
     coords_list = records.load_activity_coords(
-        activities[config.filename_col], path, cache_dir
+        activities[config.filename_col], segments, path, cache_dir
     )
 
     if not any(c is not None for c in coords_list):
@@ -427,6 +431,7 @@ def partition_and_cluster(
 
 def cluster_routes(
     activities: pd.DataFrame,
+    segments: Iterable[int | None] | None,
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None = None,
     config: RouteClusterConfig | None = None,
@@ -451,6 +456,8 @@ def cluster_routes(
     Args:
         activities: Activity data from ``load_strava_activities`` or
             ``load_strava_activities_raw``.
+        segments: Per-activity segment indices, or ``None`` to treat all
+            activities as whole-file.
         path: Strava export directory (passed to record loading).
         cache_dir: Optional cache directory for the records parquet cache.
             If omitted, activity files are parsed on every call.
@@ -469,7 +476,7 @@ def cluster_routes(
 
     has_file = activities[config.filename_col].notna()
     valid_idx, valid_routes = extract_route_features(
-        activities[has_file], path, cache_dir, config
+        activities[has_file], segments, path, cache_dir, config
     )
 
     cluster_id_arr = pd.array([pd.NA] * len(activities), dtype=pd.Int64Dtype())
@@ -513,8 +520,9 @@ def cluster_routes(
     )
 
 
-def cluster_routes_cached(
+def cluster_routes_cached(  # noqa: PLR0913
     activities: pd.DataFrame,
+    segments: Iterable[int | None] | None,
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None = None,
     cache_df: pd.DataFrame | None = None,
@@ -524,13 +532,20 @@ def cluster_routes_cached(
 
     Cache hit condition: ``cache_df`` contains ``cluster_id`` and
     ``cluster_name`` columns with entries for every file-based activity in
-    ``activities``. Any missing filename triggers a full recompute, as does
+    ``activities``. Any missing entry triggers a full recompute, as does
     passing ``cache_df=None``. Cache persistence is the caller's
     responsibility.
+
+    Cache keys are always composite ``(filename, segment)`` pairs. When
+    ``segments`` is ``None``, a sentinel of ``-1`` is used for the segment
+    component. ``cache_df`` rows without a ``"segment"`` column also resolve
+    to ``-1``, so the strava path (no segments) works without a segment column.
 
     Args:
         activities: Activity DataFrame. Must have columns matching
             ``config.filename_col`` and ``config.name_col``.
+        segments: Per-activity segment indices, or ``None`` to treat all
+            activities as whole-file.
         path: Strava export directory (passed to ``cluster_routes``).
         cache_dir: Records cache directory (passed to ``cluster_routes``).
         cache_df: Already-loaded activities cache indexed by filename.
@@ -543,24 +558,44 @@ def cluster_routes_cached(
         - ``cache_miss``: True when clustering was recomputed.
     """
 
-    if cache_df is None:
-        return cluster_routes(activities, path, cache_dir, config), True
+    cache_cols = {"cluster_id", "cluster_name"}
+    if cache_df is None or not cache_cols.issubset(cache_df.columns):
+        return (
+            cluster_routes(activities, segments, path, cache_dir, config),
+            True,
+        )
 
-    filenames = activities.loc[
-        activities[config.filename_col].notna(), config.filename_col
+    # Use -1 as a sentinel for whole-file (None) segments so keys are hashable.
+    def cache_key(fn, seg) -> tuple | None:
+        if pd.isna(fn):
+            return None
+        return (fn, -1 if seg is None or pd.isna(seg) else int(seg))
+
+    filenames = activities[config.filename_col]
+    segs = segments if segments is not None else itertools.repeat(None)
+    result_keys = [cache_key(fn, seg) for fn, seg in zip(filenames, segs)]
+    cache_lookup = {
+        cache_key(fn, row.get("segment")): (
+            row["cluster_id"],
+            row["cluster_name"],
+        )
+        for fn, row in cache_df.iterrows()
+    }
+
+    file_keys = [k for k in result_keys if k is not None]
+    if not all(k in cache_lookup for k in file_keys):
+        return (
+            cluster_routes(activities, segments, path, cache_dir, config),
+            True,
+        )
+
+    clusters = [
+        cache_lookup[k] if k is not None else (pd.NA, None) for k in result_keys
     ]
-
-    if (
-        "cluster_id" in cache_df.columns
-        and "cluster_name" in cache_df.columns
-        and filenames.isin(cache_df.index).all()
-    ):
-        fn = activities[config.filename_col]
-        cluster_id = fn.map(cache_df["cluster_id"]).astype(pd.Int64Dtype())
-        cluster_name = fn.map(cache_df["cluster_name"])
-        return pd.DataFrame(
-            {"cluster_id": cluster_id, "cluster_name": cluster_name},
-            index=activities.index,
-        ), False
-
-    return cluster_routes(activities, path, cache_dir, config), True
+    return pd.DataFrame(
+        {
+            "cluster_id": pd.array([c[0] for c in clusters], dtype="Int64"),
+            "cluster_name": [c[1] for c in clusters],
+        },
+        index=activities.index,
+    ), False

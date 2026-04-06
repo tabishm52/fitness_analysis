@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 
 from . import records, routes, utils
-from .routes import RouteClusterConfig
 
 ACTIVITIES_FNAME = "activities.csv"
 ACTIVITIES_CACHE_FNAME = "activities_cache.csv"
@@ -36,8 +35,8 @@ class ActivitiesConfig:
     ftp_window_s: int = 20 * 60
     ftp_factor: float = 0.95
     weekly_anchor: str = "W-SUN"
-    clustering: RouteClusterConfig | None = field(
-        default_factory=RouteClusterConfig
+    clustering: routes.RouteClusterConfig | None = field(
+        default_factory=routes.RouteClusterConfig
     )
 
     def __post_init__(self) -> None:
@@ -106,7 +105,9 @@ def parse_activity_file(
 ) -> dict[str, Any]:
     """Parse a single activity file and compute metrics."""
 
-    activity_records = records.parse_record_cached(filename, path, cache_dir)
+    activity_records = records.parse_record_cached(
+        filename, None, path, cache_dir
+    )
 
     timezone = utils.infer_timezone(activity_records)
     has_location = timezone is not None
@@ -193,7 +194,7 @@ def load_file_metrics(
     misses = [f for f, r in zip(files, rows) if r is None]
 
     if misses:
-        records.warm_records_cache(misses, path, cache_dir)
+        records.warm_records_cache(misses, None, path, cache_dir)
         miss_map = {
             f: parse_activity_file(f, path, cache_dir, config) for f in misses
         }
@@ -258,6 +259,7 @@ def build_activity_columns(
     if config.clustering is not None:
         clusters, cluster_miss = routes.cluster_routes_cached(
             csv,
+            None,
             path,
             cache_dir,
             cache_df=(

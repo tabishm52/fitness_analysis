@@ -127,7 +127,7 @@ def process_commute_file(
     """
 
     activity_records = records.parse_record_cached(
-        activity["Filename"], path, cache_dir
+        activity["Filename"], None, path, cache_dir
     )
 
     # Drop periods of inactivity, to cover the cases where the GPS was left
@@ -274,7 +274,7 @@ def process_commutes(
     if not misses:
         return results
 
-    records.warm_records_cache(misses, path, cache_dir)
+    records.warm_records_cache(misses, None, path, cache_dir)
 
     miss_rows = file_commutes[file_commutes["Filename"].isin(misses)]
     for _, activity in miss_rows.iterrows():
