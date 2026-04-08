@@ -520,6 +520,17 @@ def cluster_routes(
     )
 
 
+def cluster_cache_key(fn, seg) -> tuple | None:
+    """Return ``(fn, int(seg))`` or ``None`` if fn is NaN.
+
+    Uses -1 as a sentinel for whole-file (None) segments so keys are hashable.
+    """
+
+    if pd.isna(fn):
+        return None
+    return (fn, -1 if seg is None or pd.isna(seg) else int(seg))
+
+
 def cluster_routes_cached(  # noqa: PLR0913
     activities: pd.DataFrame,
     segments: Iterable[int | None] | None,
@@ -565,17 +576,13 @@ def cluster_routes_cached(  # noqa: PLR0913
             True,
         )
 
-    # Use -1 as a sentinel for whole-file (None) segments so keys are hashable.
-    def cache_key(fn, seg) -> tuple | None:
-        if pd.isna(fn):
-            return None
-        return (fn, -1 if seg is None or pd.isna(seg) else int(seg))
-
     filenames = activities[config.filename_col]
     segs = segments if segments is not None else itertools.repeat(None)
-    result_keys = [cache_key(fn, seg) for fn, seg in zip(filenames, segs)]
+    result_keys = [
+        cluster_cache_key(fn, seg) for fn, seg in zip(filenames, segs)
+    ]
     cache_lookup = {
-        cache_key(fn, row.get("segment")): (
+        cluster_cache_key(fn, row.get("segment")): (
             row["cluster_id"],
             row["cluster_name"],
         )
