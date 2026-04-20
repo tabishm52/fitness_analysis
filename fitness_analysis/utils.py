@@ -1,11 +1,8 @@
 """Common utility functions for fitness_analysis module."""
 
-from collections.abc import Iterable
-
 import numpy as np
 import pandas as pd
 import pint
-import pwlf
 import timezonefinder
 
 # Unit conversion factors derived from pint
@@ -22,107 +19,6 @@ CAL_PER_LB_WEEK = _FAT_KCAL_PER_LB / 7
 
 # Global timezone finder shared across the fitness_analysis module
 tz_finder = timezonefinder.TimezoneFinder()
-
-
-# ---------------------------------------------------------------------------
-# Piecewise linear fitting
-# ---------------------------------------------------------------------------
-
-
-def _per_unit_us_factor(units: str) -> np.uint64:
-    """Get conversion factor from 1 ``units`` to microseconds."""
-
-    return np.uint64(np.timedelta64(np.timedelta64(1, units), "us"))
-
-
-def _to_seconds(
-    index: pd.Index | Iterable[pd.Timestamp], t0_us: float
-) -> np.ndarray:
-    """Convert timestamps to float seconds since a reference time."""
-
-    us = np.array(index).astype("datetime64[us]").astype(np.float64)
-    return (us - t0_us) / 1e6
-
-
-def _pwlf_fit(
-    series: pd.Series,
-    units: str,
-    breaks: Iterable[pd.Timestamp] | None = None,
-    num_segments: int | None = None,
-) -> pd.DataFrame:
-    """Fit piecewise linear regression on a time-indexed series.
-
-    Exactly one of ``breaks`` or ``num_segments`` must be provided.
-    """
-
-    if (breaks is None) == (num_segments is None):
-        raise ValueError("Specify exactly one of breaks or num_segments")
-
-    # x in seconds from t0
-    t0_us = float(
-        np.array(series.index[:1])
-        .astype("datetime64[us]")
-        .astype(np.float64)[0]
-    )
-    x_s = _to_seconds(series.index, t0_us)
-    s_per_unit = float(_per_unit_us_factor(units)) / 1e6  # µs/unit → s/unit
-
-    model = pwlf.PiecewiseLinFit(x_s, series.values)
-    if breaks is not None:
-        breaks_s = _to_seconds(breaks, t0_us)
-        model.fit_with_breaks(breaks_s)
-        bp_s = breaks_s
-    else:
-        bp_s = model.fit(num_segments)
-
-    bp_us = (bp_s * 1e6 + t0_us).astype("datetime64[us]")
-    result = pd.DataFrame(index=bp_us)
-    result["value"] = model.predict(bp_s)
-    result["rate"] = s_per_unit * np.append(model.calc_slopes(), [np.nan])
-
-    return result
-
-
-def piecewise_fit(
-    series: pd.Series,
-    n_segments: int,
-    *,
-    units: str,
-) -> pd.DataFrame:
-    """Fit a piecewise linear regression on a time series.
-
-    Args:
-        series: Time-indexed values. NaN entries are dropped before fitting.
-        n_segments: Number of segments for piecewise regression.
-        units: Time unit for slope at each breakpoint
-            (e.g., 'D' for per day, 'W' for per week).
-
-    Returns:
-        Time-indexed breakpoints with ``value`` and ``rate`` columns.
-    """
-
-    return _pwlf_fit(series.dropna(), units, num_segments=n_segments)
-
-
-def piecewise_fit_with_breaks(
-    series: pd.Series,
-    breaks: Iterable[pd.Timestamp],
-    *,
-    units: str,
-) -> pd.DataFrame:
-    """Fit a piecewise linear regression with specified breakpoints.
-
-    Args:
-        series: Time-indexed values. NaN entries are dropped before fitting.
-        breaks: Breakpoint timestamps for piecewise regression.
-        units: Time unit for slope at each breakpoint
-            (e.g., 'D' for per day, 'W' for per week).
-
-    Returns:
-        Time-indexed breakpoints with ``value`` and ``rate`` columns.
-    """
-
-    return _pwlf_fit(series.dropna(), units, breaks=breaks)
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +92,9 @@ def rolling_linear_rate(
             np.array(series.index).astype("datetime64[us]").astype(np.float64)
         )
     )
-    units_per_step = float(_per_unit_us_factor(units)) / step_us
+    units_per_step = (
+        np.timedelta64(1, units) / np.timedelta64(1, "us")
+    ) / step_us
 
     def _slope(arr: np.ndarray) -> float:
         valid = ~np.isnan(arr)

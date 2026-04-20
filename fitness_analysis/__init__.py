@@ -23,7 +23,6 @@ from .strava import (
     invalidate_activities_cache,
     load_strava_activities,
 )
-from .utils import piecewise_fit, piecewise_fit_with_breaks
 
 __all__ = [
     "ActivitiesConfig",
@@ -42,6 +41,4 @@ __all__ = [
     "load_commute_activities",
     "load_mnd_data",
     "load_strava_activities",
-    "piecewise_fit",
-    "piecewise_fit_with_breaks",
 ]

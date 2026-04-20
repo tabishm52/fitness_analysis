@@ -12,7 +12,6 @@ dependencies = [
     "pandas",
     "pint",
     "pyarrow",
-    "pwlf",
     "scikit-learn",
     "timezonefinder",
     "utm",
