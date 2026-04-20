@@ -340,7 +340,7 @@ def load_commute_splits(
 # ---------------------------------------------------------------------------
 
 
-def load_cluster_columns(  # noqa: PLR0913
+def load_cluster_columns(
     file_results: list[dict[str, Any]],
     csv_results: list[dict[str, Any]],
     cache_df: pd.DataFrame | None,

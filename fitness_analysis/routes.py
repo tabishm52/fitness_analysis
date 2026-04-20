@@ -531,7 +531,7 @@ def cluster_cache_key(fn, seg) -> tuple | None:
     return (fn, -1 if seg is None or pd.isna(seg) else int(seg))
 
 
-def cluster_routes_cached(  # noqa: PLR0913
+def cluster_routes_cached(
     activities: pd.DataFrame,
     segments: Iterable[int | None] | None,
     path: str | PathLike[str],
