@@ -565,7 +565,9 @@ def load_commute_activities(
             elapsed_time=lambda d: pd.to_timedelta(
                 d["elapsed_time_s"], unit="s"
             ),
-            moving_time=lambda d: pd.to_timedelta(d["moving_time_s"], unit="s"),
+            moving_time=lambda d: pd.to_timedelta(
+                d["moving_time_s"].fillna(0), unit="s"
+            ).where(d["moving_time_s"].notna()),
             segment=lambda d: d["segment"].astype("Int64"),
         )
         .drop(columns=["elapsed_time_s", "moving_time_s"])
