@@ -12,18 +12,21 @@ import pandas as pd
 DB_FILE = "fitness_cache.db"
 
 
-def to_sql(v: Any) -> Any:
-    """Coerce a value into a sqlite3-safe Python scalar.
+# ---------------------------------------------------------------------------
+# Value coercion
+# ---------------------------------------------------------------------------
 
-    Returns None for NaN values (sqlite3 rejects NaN floats) and calls
-    ``.item()`` on numpy scalars so sqlite3 does not fall back to storing
-    them as BLOBs.
+
+def to_sql(v: Any) -> Any:
+    """Coerce a value to a sqlite3-safe scalar.
+
+    Converts NaN to None and numpy scalars to their Python equivalents.
 
     Args:
         v: Value to coerce.
 
     Returns:
-        A sqlite3-safe Python scalar, or None if v is NaN.
+        sqlite3-safe scalar, or ``None`` if ``v`` is NaN.
     """
 
     if pd.isna(v):
@@ -32,25 +35,55 @@ def to_sql(v: Any) -> Any:
     return v.item() if hasattr(v, "item") else v
 
 
+def segment_from_db(seg: int) -> int | None:
+    """Translate a segment value from its SQLite representation to Python.
+
+    Args:
+        seg: Segment integer read from the database.
+
+    Returns:
+        ``None`` for whole-file activities, otherwise the segment index.
+    """
+
+    return None if seg == -1 else seg
+
+
+def segment_to_db(seg: int | None) -> int:
+    """Translate a segment value from Python to its SQLite representation.
+
+    Args:
+        seg: Segment index, or ``None`` / NaN for single-segment activities.
+
+    Returns:
+        -1 for whole-file activities, otherwise the segment index as an ``int``.
+    """
+
+    return -1 if seg is None or pd.isna(seg) else int(seg)
+
+
 def cache_key(fn: str | float, seg: int | None) -> tuple[str, int] | None:
-    """Return ``(fn, int(seg))`` or ``None`` if fn is NaN.
+    """Build a ``(filename, segment)`` DB primary key.
 
     Uses -1 as a sentinel for whole-file (None) segments so keys are hashable
     and map directly to the ``segment`` column in both DB tables.
 
     Args:
-        fn: Activity filename, or ``float`` NaN for activities without a file.
-        seg: Segment index, or ``None`` for whole-file (single-segment)
-            activities.
+        fn: Activity filename, or NaN for fileless activities.
+        seg: Segment index, or ``None`` for single-segment activities.
 
     Returns:
-        ``(filename, segment_int)`` tuple, or ``None`` if ``fn`` is NaN.
+        ``(filename, segment)`` tuple, or ``None`` if ``fn`` is NaN.
     """
 
     if pd.isna(fn):
         return None
 
-    return (fn, -1 if seg is None or pd.isna(seg) else int(seg))
+    return (fn, segment_to_db(seg))
+
+
+# ---------------------------------------------------------------------------
+# Connection management
+# ---------------------------------------------------------------------------
 
 
 def db_path(cache_dir: str | PathLike[str]) -> Path:
@@ -105,6 +138,19 @@ def ensure_tables(conn: sqlite3.Connection) -> None:
             has_location   INTEGER,
             max_heart_rate REAL,
             estimated_ftp  REAL,
+            cluster_id     REAL,
+            cluster_name   TEXT,
+            PRIMARY KEY (filename, segment)
+        );
+        CREATE TABLE IF NOT EXISTS commutes (
+            filename       TEXT NOT NULL,
+            segment        INTEGER NOT NULL,
+            date           TEXT,
+            description    TEXT,
+            direction      TEXT,
+            distance       REAL,
+            elapsed_time_s REAL,
+            moving_time_s  REAL,
             cluster_id     REAL,
             cluster_name   TEXT,
             PRIMARY KEY (filename, segment)

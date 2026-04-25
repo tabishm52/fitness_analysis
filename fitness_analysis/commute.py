@@ -5,15 +5,12 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from functools import partial
 from os import PathLike
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from . import cache_db, records, routes, strava, utils
-
-COMMUTES_CACHE_FNAME = "commutes_cache.csv"
 
 
 @dataclass
@@ -64,11 +61,7 @@ def _cache_df_to_dict(
                 "elapsed_time_s": r["elapsed_time_s"],
                 "moving_time_s": r["moving_time_s"],
                 "filename": filename,
-                "segment": (
-                    None
-                    if pd.isna(r.get("segment", np.nan))
-                    else int(r["segment"])
-                ),
+                "segment": cache_db.segment_from_db(r["segment"]),
             }
             for _, r in group.iterrows()
         ]
@@ -81,10 +74,10 @@ def invalidate_commutes_cache(
 ) -> None:
     """Invalidate the commutes cache.
 
-    If ``files`` is None, deletes the entire cache file. Otherwise removes
-    only the entries for the given activity filenames, leaving the rest intact.
-    For targeted invalidation, also deletes any segment parquets written for
-    multi-segment activities and clears cluster columns from surviving rows.
+    If ``files`` is None, clears the entire commutes table and deletes any
+    segment parquets for multi-segment activities. Otherwise removes only the
+    entries for the given activity filenames, deleting their segment parquets
+    as well.
 
     Args:
         files: Activity filenames to remove. If None, the whole cache is
@@ -92,30 +85,34 @@ def invalidate_commutes_cache(
         cache_dir: Cache directory passed to ``load_commute_activities``.
     """
 
-    cache_path = Path(cache_dir) / COMMUTES_CACHE_FNAME
-    if not cache_path.exists():
+    if not cache_db.db_path(cache_dir).exists():
         return
 
-    if files is None:
-        cache_path.unlink()
-        return
+    with cache_db.open_db(cache_dir) as conn:
+        if files is None:
+            rows = conn.execute(
+                "SELECT filename, segment FROM commutes WHERE segment != -1"
+            ).fetchall()
+        else:
+            files_list = list(files)
+            marks = ",".join("?" * len(files_list))
+            rows = conn.execute(
+                "SELECT filename, segment FROM commutes"
+                f" WHERE filename IN ({marks}) AND segment != -1",
+                files_list,
+            ).fetchall()
 
-    cache = pd.read_csv(cache_path, index_col="filename")
-    files_list = list(files)
-    to_remove = cache[cache.index.isin(files_list)]
+        if rows:
+            fns, segs = zip(*rows)
+            records.invalidate_records_cache(fns, segs, cache_dir)
 
-    # Delete segment parquets for multi-segment activities being invalidated.
-    if "segment" in to_remove.columns:
-        segs = to_remove["segment"].dropna()
-        if not segs.empty:
-            records.invalidate_records_cache(
-                segs.index,
-                segs.astype(int),
-                cache_dir,
+        if files is None:
+            conn.execute("DELETE FROM commutes")
+        else:
+            conn.execute(
+                f"DELETE FROM commutes WHERE filename IN ({marks})",
+                files_list,
             )
-
-    surviving = cache[~cache.index.isin(files_list)]
-    surviving.sort_index().to_csv(cache_path)
 
 
 # ---------------------------------------------------------------------------
@@ -347,12 +344,12 @@ def load_cluster_columns(
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None,
     config: CommuteConfig,
-) -> tuple[pd.DataFrame | None, bool]:
+) -> bool:
     """Run route clustering and assign cluster columns into results in place.
 
-    Returns ``(None, False)`` when there is nothing to cluster (no file results
-    or no cache directory). CSV-only entries in ``csv_results`` are always
-    filled with ``(pd.NA, None)``.
+    Returns ``False`` when there is nothing to cluster (no file results or no
+    cache directory). CSV-only entries in ``csv_results`` are always filled
+    with ``(pd.NA, None)``.
 
     Args:
         file_results: Commute result dicts with a non-NaN filename.
@@ -363,10 +360,7 @@ def load_cluster_columns(
         config: Commute configuration.
 
     Returns:
-        Tuple of:
-        - ``clusters``: ``cluster_id`` and ``cluster_name`` columns aligned to
-          ``file_results``, or ``None`` when skipped.
-        - ``cluster_miss``: True when clustering was recomputed.
+        ``True`` when clustering was recomputed, ``False`` otherwise.
     """
 
     for r in csv_results:
@@ -375,7 +369,7 @@ def load_cluster_columns(
     if not file_results or cache_dir is None:
         for r in file_results:
             r["cluster_id"], r["cluster_name"] = pd.NA, None
-        return None, False
+        return False
 
     clusters, cluster_miss = routes.cluster_routes_cached(
         pd.DataFrame(file_results),
@@ -390,7 +384,7 @@ def load_cluster_columns(
         r["cluster_id"] = clusters["cluster_id"].iat[i]
         r["cluster_name"] = clusters["cluster_name"].iat[i]
 
-    return clusters, cluster_miss
+    return cluster_miss
 
 
 def build_commute_columns(
@@ -419,13 +413,13 @@ def build_commute_columns(
         List of result dicts, one per commute split.
     """
 
-    cache_path = Path(cache_dir) / COMMUTES_CACHE_FNAME if cache_dir else None
-    if cache_path is None:
-        cache_df = None
-    elif cache_path.exists():
-        cache_df = pd.read_csv(cache_path, index_col="filename")
+    if cache_dir is not None:
+        with cache_db.open_db(cache_dir) as conn:
+            cache_df = pd.read_sql_query(
+                "SELECT * FROM commutes", conn, index_col="filename"
+            )
     else:
-        cache_df = pd.DataFrame()
+        cache_df = None
 
     file_mask = commutes["Filename"].notna()
     file_splits, new_rows = load_commute_splits(
@@ -455,7 +449,7 @@ def build_commute_columns(
     if config.clustering is not None:
         file_results = [r for r in results if pd.notna(r["filename"])]
         csv_results = [r for r in results if pd.isna(r["filename"])]
-        clusters, cluster_miss = load_cluster_columns(
+        cluster_miss = load_cluster_columns(
             file_results,
             csv_results,
             cache_df,
@@ -464,36 +458,44 @@ def build_commute_columns(
             config,
         )
 
-    if cache_path is not None and (new_rows is not None or cluster_miss):
-        if new_rows is not None:
-            updated = (
-                pd.concat([cache_df, new_rows])
-                if cache_df is not None and not cache_df.empty
-                else new_rows
-            )
-        else:
-            updated = cache_df.copy()
-
-        if cluster_miss:
-            cluster_map = {
-                cache_db.cache_key(r["filename"], r["segment"]): (
-                    clusters["cluster_id"].iat[i],
-                    clusters["cluster_name"].iat[i],
+    if cache_dir is not None and (new_rows is not None or cluster_miss):
+        with cache_db.open_db(cache_dir) as conn:
+            if new_rows is not None:
+                conn.executemany(
+                    "INSERT INTO commutes"
+                    " (filename, segment, date, description, direction,"
+                    " distance, elapsed_time_s, moving_time_s)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        (
+                            fn,
+                            cache_db.segment_to_db(row["segment"]),
+                            str(row["date"]),
+                            row["description"],
+                            row["direction"],
+                            cache_db.to_sql(row["distance"]),
+                            cache_db.to_sql(row["elapsed_time_s"]),
+                            cache_db.to_sql(row["moving_time_s"]),
+                        )
+                        for fn, row in new_rows.iterrows()
+                    ],
                 )
-                for i, r in enumerate(file_results)
-            }
 
-            updated["cluster_id"], updated["cluster_name"] = zip(
-                *(
-                    cluster_map.get(
-                        cache_db.cache_key(fn, row.get("segment")),
-                        (pd.NA, None),
-                    )
-                    for fn, row in updated.iterrows()
+            if cluster_miss:
+                conn.executemany(
+                    "UPDATE commutes"
+                    " SET cluster_id=?, cluster_name=?"
+                    " WHERE filename=? AND segment=?",
+                    [
+                        (
+                            cache_db.to_sql(r["cluster_id"]),
+                            cache_db.to_sql(r["cluster_name"]),
+                            r["filename"],
+                            cache_db.segment_to_db(r["segment"]),
+                        )
+                        for r in file_results
+                    ],
                 )
-            )
-
-        updated.sort_values("date").sort_index(kind="stable").to_csv(cache_path)
 
     return results
 
