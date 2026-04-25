@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from . import records, routes, strava, utils
+from . import cache_db, records, routes, strava, utils
 
 COMMUTES_CACHE_FNAME = "commutes_cache.csv"
 
@@ -476,7 +476,7 @@ def build_commute_columns(
 
         if cluster_miss:
             cluster_map = {
-                routes.cluster_cache_key(r["filename"], r["segment"]): (
+                cache_db.cache_key(r["filename"], r["segment"]): (
                     clusters["cluster_id"].iat[i],
                     clusters["cluster_name"].iat[i],
                 )
@@ -486,7 +486,7 @@ def build_commute_columns(
             updated["cluster_id"], updated["cluster_name"] = zip(
                 *(
                     cluster_map.get(
-                        routes.cluster_cache_key(fn, row.get("segment")),
+                        cache_db.cache_key(fn, row.get("segment")),
                         (pd.NA, None),
                     )
                     for fn, row in updated.iterrows()

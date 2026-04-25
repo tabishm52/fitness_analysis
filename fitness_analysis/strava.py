@@ -11,10 +11,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from . import records, routes, utils
+from . import cache_db, records, routes, utils
 
 ACTIVITIES_FNAME = "activities.csv"
-ACTIVITIES_CACHE_FNAME = "activities_cache.csv"
 
 
 @dataclass
@@ -56,7 +55,7 @@ def _cache_df_to_dict(cache: pd.DataFrame) -> dict[str, dict[str, Any]]:
         filename: {
             "filename": filename,
             "timezone": row["timezone"],
-            "has_location": row["has_location"],
+            "has_location": bool(row["has_location"]),
             "max_heart_rate": row["max_heart_rate"],
             "estimated_ftp": row["estimated_ftp"],
         }
@@ -79,17 +78,19 @@ def invalidate_activities_cache(
         cache_dir: Cache directory passed to ``load_strava_activities``.
     """
 
-    cache_path = Path(cache_dir) / ACTIVITIES_CACHE_FNAME
-    if not cache_path.exists():
+    if not cache_db.db_path(cache_dir).exists():
         return
 
-    if files is None:
-        cache_path.unlink()
-        return
-
-    cache = pd.read_csv(cache_path, index_col="filename")
-    cache = cache[~cache.index.isin(list(files))]
-    cache.sort_index().to_csv(cache_path)
+    with cache_db.open_db(cache_dir) as conn:
+        if files is None:
+            conn.execute("DELETE FROM activities")
+        else:
+            files_list = list(files)
+            marks = ",".join("?" * len(files_list))
+            conn.execute(
+                f"DELETE FROM activities WHERE filename IN ({marks})",
+                files_list,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -231,14 +232,13 @@ def build_activity_columns(
         Computed columns aligned to the index of ``csv``.
     """
 
-    cache_path = Path(cache_dir) / ACTIVITIES_CACHE_FNAME if cache_dir else None
-    if cache_path is None:
-        cache_df = None  # no caching at all
-    elif cache_path.exists():
-        cache_df = pd.read_csv(cache_path, index_col="filename")
-        cache_df = cache_df[cache_df.index.notna()]
+    if cache_dir is not None:
+        with cache_db.open_db(cache_dir) as conn:
+            cache_df = pd.read_sql_query(
+                "SELECT * FROM activities", conn, index_col="filename"
+            )
     else:
-        cache_df = pd.DataFrame()  # cache dir set but file not yet created
+        cache_df = None
 
     calcs, miss_map = load_file_metrics(
         csv["Filename"], path, cache_dir, config, cache_df
@@ -272,28 +272,42 @@ def build_activity_columns(
         calcs["cluster_id"] = clusters["cluster_id"]
         calcs["cluster_name"] = clusters["cluster_name"]
 
-    if cache_path is not None and (miss_map or cluster_miss):
-        if miss_map:
-            new_rows = pd.DataFrame(miss_map.values()).set_index("filename")
-            updated = (
-                pd.concat([cache_df, new_rows])
-                if cache_df is not None and not cache_df.empty
-                else new_rows
-            )
-        else:
-            updated = cache_df.copy()
+    if cache_dir is not None and (miss_map or cluster_miss):
+        with cache_db.open_db(cache_dir) as conn:
+            if miss_map:
+                conn.executemany(
+                    "INSERT INTO activities"
+                    " (filename, segment, timezone, has_location,"
+                    " max_heart_rate, estimated_ftp)"
+                    " VALUES (?, -1, ?, ?, ?, ?)",
+                    [
+                        (
+                            r["filename"],
+                            cache_db.to_sql(r["timezone"]),
+                            int(r["has_location"]),
+                            cache_db.to_sql(r["max_heart_rate"]),
+                            cache_db.to_sql(r["estimated_ftp"]),
+                        )
+                        for r in miss_map.values()
+                    ],
+                )
 
-        if cluster_miss:
-            fn = csv["Filename"].dropna()
-            fn = fn[~fn.duplicated()]
-            updated["cluster_id"] = pd.Series(
-                calcs.loc[fn.index, "cluster_id"].values, index=fn.values
-            )
-            updated["cluster_name"] = pd.Series(
-                calcs.loc[fn.index, "cluster_name"].values, index=fn.values
-            )
-
-        updated.sort_index().to_csv(cache_path)
+            if cluster_miss:
+                fn = csv["Filename"].dropna()
+                fn = fn[~fn.duplicated()]
+                conn.executemany(
+                    "UPDATE activities"
+                    " SET cluster_id=?, cluster_name=?"
+                    " WHERE filename=? AND segment=-1",
+                    [
+                        (
+                            cache_db.to_sql(calcs.at[idx, "cluster_id"]),
+                            cache_db.to_sql(calcs.at[idx, "cluster_name"]),
+                            filename,
+                        )
+                        for idx, filename in fn.items()
+                    ],
+                )
 
     return calcs
 

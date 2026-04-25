@@ -12,7 +12,7 @@ import similaritymeasures
 import utm
 from sklearn.cluster import DBSCAN
 
-from . import records
+from . import cache_db, records
 
 # Parallel processing: min_pairs is where pool startup overhead is justified;
 # chunk_size balances IPC overhead vs load balance. (tuned on Apple M1 Pro)
@@ -520,17 +520,6 @@ def cluster_routes(
     )
 
 
-def cluster_cache_key(fn, seg) -> tuple | None:
-    """Return ``(fn, int(seg))`` or ``None`` if fn is NaN.
-
-    Uses -1 as a sentinel for whole-file (None) segments so keys are hashable.
-    """
-
-    if pd.isna(fn):
-        return None
-    return (fn, -1 if seg is None or pd.isna(seg) else int(seg))
-
-
 def cluster_routes_cached(
     activities: pd.DataFrame,
     segments: Iterable[int | None] | None,
@@ -579,10 +568,10 @@ def cluster_routes_cached(
     filenames = activities[config.filename_col]
     segs = segments if segments is not None else itertools.repeat(None)
     result_keys = [
-        cluster_cache_key(fn, seg) for fn, seg in zip(filenames, segs)
+        cache_db.cache_key(fn, seg) for fn, seg in zip(filenames, segs)
     ]
     cache_lookup = {
-        cluster_cache_key(fn, row.get("segment")): (
+        cache_db.cache_key(fn, row.get("segment")): (
             row["cluster_id"],
             row["cluster_name"],
         )
