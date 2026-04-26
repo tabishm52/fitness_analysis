@@ -48,18 +48,33 @@ class ActivitiesConfig:
 # ---------------------------------------------------------------------------
 
 
-def _cache_df_to_dict(cache: pd.DataFrame) -> dict[str, dict[str, Any]]:
-    """Convert a cache DataFrame to a filename-keyed dict of result dicts."""
+def load_activities_cache(
+    cache_dir: str | PathLike[str],
+) -> dict[str, dict[str, Any]]:
+    """Read the activities cache from the database.
+
+    Args:
+        cache_dir: Cache directory containing the SQLite database.
+
+    Returns:
+        Dict mapping each activity filename to its cached metric dict.
+    """
+
+    with cache_db.open_db(cache_dir) as conn:
+        rows = conn.execute(
+            "SELECT filename, timezone, has_location,"
+            " max_heart_rate, estimated_ftp FROM activities"
+        ).fetchall()
 
     return {
-        filename: {
-            "filename": filename,
-            "timezone": row["timezone"],
-            "has_location": bool(row["has_location"]),
-            "max_heart_rate": row["max_heart_rate"],
-            "estimated_ftp": row["estimated_ftp"],
+        fn: {
+            "filename": fn,
+            "timezone": tz,
+            "has_location": bool(has_loc),
+            "max_heart_rate": max_hr,
+            "estimated_ftp": ftp,
         }
-        for filename, row in cache.iterrows()
+        for fn, tz, has_loc, max_hr, ftp in rows
     }
 
 
@@ -146,7 +161,7 @@ def load_file_metrics(
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None,
     config: ActivitiesConfig,
-    cache_df: pd.DataFrame | None = None,
+    cache: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, dict[str, Any]]]:
     """Load per-activity metrics, using a pre-loaded cache when provided.
 
@@ -155,8 +170,7 @@ def load_file_metrics(
         path: Strava export directory.
         cache_dir: Records parquet cache directory.
         config: Activities configuration.
-        cache_df: Already-loaded activities cache indexed by filename. Pass
-            None to skip cache lookup (all files are processed).
+        cache: Activities cache keyed by filename, or ``None`` to skip caching.
 
     Returns:
         Tuple of:
@@ -165,7 +179,7 @@ def load_file_metrics(
           every entry was a cache hit or had no file.
     """
 
-    if cache_df is None:
+    if cache is None:
         with ProcessPoolExecutor() as ex:
             results = list(
                 ex.map(
@@ -180,8 +194,6 @@ def load_file_metrics(
             )
         return pd.DataFrame(results, index=files.index), {}
 
-    cached = _cache_df_to_dict(cache_df) if not cache_df.empty else {}
-
     no_file_result = {
         "timezone": np.nan,
         "has_location": False,
@@ -189,7 +201,7 @@ def load_file_metrics(
         "estimated_ftp": np.nan,
     }
     rows = [
-        {"filename": f, **no_file_result} if pd.isna(f) else cached.get(f)
+        {"filename": f, **no_file_result} if pd.isna(f) else cache.get(f)
         for f in files
     ]
     misses = [f for f, r in zip(files, rows) if r is None]
@@ -232,16 +244,10 @@ def build_activity_columns(
         Computed columns aligned to the index of ``csv``.
     """
 
-    if cache_dir is not None:
-        with cache_db.open_db(cache_dir) as conn:
-            cache_df = pd.read_sql_query(
-                "SELECT * FROM activities", conn, index_col="filename"
-            )
-    else:
-        cache_df = None
+    cache = load_activities_cache(cache_dir) if cache_dir is not None else None
 
     calcs, miss_map = load_file_metrics(
-        csv["Filename"], path, cache_dir, config, cache_df
+        csv["Filename"], path, cache_dir, config, cache
     )
 
     calcs["trainer"] = (csv["Activity Type"] == "Virtual Ride") | (

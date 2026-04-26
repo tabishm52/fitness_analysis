@@ -45,26 +45,40 @@ class CommuteConfig:
 # ---------------------------------------------------------------------------
 
 
-def _cache_df_to_dict(
-    cache: pd.DataFrame,
+def load_commutes_cache(
+    cache_dir: str | PathLike[str],
 ) -> dict[str, list[dict[str, Any]]]:
-    """Convert a cache DataFrame to a filename-keyed dict of result lists."""
+    """Read the commutes cache from the database.
+
+    Args:
+        cache_dir: Cache directory containing the SQLite database.
+
+    Returns:
+        Dict mapping each activity filename to its list of cached split dicts.
+    """
+
+    with cache_db.open_db(cache_dir) as conn:
+        rows = conn.execute(
+            "SELECT filename, segment, date, description, direction,"
+            " distance, elapsed_time_s, moving_time_s FROM commutes"
+            " ORDER BY filename"
+        ).fetchall()
 
     result = {}
-    for filename, group in cache.groupby(level=0):
-        result[filename] = [
+    for fn, seg, date, desc, direction, dist, elapsed_s, moving_s in rows:
+        result.setdefault(fn, []).append(
             {
-                "date": pd.Timestamp(r["date"]),
-                "description": r["description"],
-                "direction": r["direction"],
-                "distance": r["distance"],
-                "elapsed_time_s": r["elapsed_time_s"],
-                "moving_time_s": r["moving_time_s"],
-                "filename": filename,
-                "segment": cache_db.segment_from_db(r["segment"]),
+                "date": pd.Timestamp(date),
+                "description": desc,
+                "direction": direction,
+                "distance": dist,
+                "elapsed_time_s": elapsed_s,
+                "moving_time_s": moving_s,
+                "filename": fn,
+                "segment": cache_db.segment_from_db(seg),
             }
-            for _, r in group.iterrows()
-        ]
+        )
+
     return result
 
 
@@ -269,22 +283,20 @@ def load_commute_splits(
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None,
     config: CommuteConfig,
-    cache_df: pd.DataFrame | None,
+    cache: dict[str, list[dict[str, Any]]] | None,
 ) -> tuple[dict[str, list[dict[str, Any]]], pd.DataFrame | None]:
     """Load commute splits for a set of file-based activities.
 
-    Computes per-activity commute splits. When ``cache_df`` is provided,
-    uses the commutes cache for hits and processes only misses. When
-    ``cache_df`` is ``None`` (no caching), all files are parsed in parallel.
+    Computes per-activity commute splits. When ``cache`` is provided, uses
+    the commutes cache for hits and processes only misses. When ``cache`` is
+    ``None`` (no caching), all files are parsed in parallel.
 
     Args:
         file_commutes: Commute activities with a non-NaN ``Filename`` column.
         path: Strava export directory.
         cache_dir: Optional directory for the records parquet cache.
         config: Configuration parameters.
-        cache_df: Already-loaded commutes cache indexed by filename, an empty
-            DataFrame when the cache file does not yet exist, or ``None`` to
-            skip caching entirely.
+        cache: Commutes cache keyed by filename, or ``None`` to skip caching.
 
     Returns:
         Tuple of:
@@ -296,7 +308,7 @@ def load_commute_splits(
 
     files = file_commutes["Filename"]
 
-    if cache_df is None:
+    if cache is None:
         rows = list(file_commutes.iterrows())
         fn = partial(parse_commute_file, path=path, config=config)
         with ProcessPoolExecutor() as ex:
@@ -308,8 +320,6 @@ def load_commute_splits(
             },
             None,
         )
-
-    cache = _cache_df_to_dict(cache_df) if not cache_df.empty else {}
 
     splits = {f: cache.get(f) for f in files}
     misses = [f for f, r in splits.items() if r is None]
@@ -358,17 +368,11 @@ def build_commute_columns(
         List of result dicts, one per commute split.
     """
 
-    if cache_dir is not None:
-        with cache_db.open_db(cache_dir) as conn:
-            cache_df = pd.read_sql_query(
-                "SELECT * FROM commutes", conn, index_col="filename"
-            )
-    else:
-        cache_df = None
+    cache = load_commutes_cache(cache_dir) if cache_dir is not None else None
 
     file_mask = commutes["Filename"].notna()
     file_splits, new_rows = load_commute_splits(
-        commutes[file_mask], path, cache_dir, config, cache_df
+        commutes[file_mask], path, cache_dir, config, cache
     )
 
     csv_commutes = commutes[~file_mask]
