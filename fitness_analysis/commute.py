@@ -447,10 +447,6 @@ def load_commute_activities(
     deriving metrics from the Strava CSV fields and using ``home_tz`` to
     determine the local date.
 
-    When ``cache_dir`` is provided, results are cached in
-    ``COMMUTES_CACHE_FNAME`` so subsequent calls are fast even for large
-    exports.
-
     Args:
         path: Strava export directory.
         home_tz: Timezone for commutes without GPS location data. Either a
