@@ -155,4 +155,8 @@ def ensure_tables(conn: sqlite3.Connection) -> None:
             cluster_name   TEXT,
             PRIMARY KEY (filename, segment)
         );
+        CREATE TABLE IF NOT EXISTS cluster_fingerprints (
+            table_name  TEXT PRIMARY KEY,
+            fingerprint TEXT NOT NULL
+        );
     """)

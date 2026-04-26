@@ -332,61 +332,6 @@ def load_commute_splits(
     return splits, new_rows
 
 
-# ---------------------------------------------------------------------------
-# Orchestration
-# ---------------------------------------------------------------------------
-
-
-def load_cluster_columns(
-    file_results: list[dict[str, Any]],
-    csv_results: list[dict[str, Any]],
-    cache_df: pd.DataFrame | None,
-    path: str | PathLike[str],
-    cache_dir: str | PathLike[str] | None,
-    config: CommuteConfig,
-) -> bool:
-    """Run route clustering and assign cluster columns into results in place.
-
-    Returns ``False`` when there is nothing to cluster (no file results or no
-    cache directory). CSV-only entries in ``csv_results`` are always filled
-    with ``(pd.NA, None)``.
-
-    Args:
-        file_results: Commute result dicts with a non-NaN filename.
-        csv_results: Commute result dicts without a file (CSV-only).
-        cache_df: Already-loaded commutes cache, or ``None`` to skip lookup.
-        path: Strava export directory.
-        cache_dir: Records cache directory.
-        config: Commute configuration.
-
-    Returns:
-        ``True`` when clustering was recomputed, ``False`` otherwise.
-    """
-
-    for r in csv_results:
-        r["cluster_id"], r["cluster_name"] = pd.NA, None
-
-    if not file_results or cache_dir is None:
-        for r in file_results:
-            r["cluster_id"], r["cluster_name"] = pd.NA, None
-        return False
-
-    clusters, cluster_miss = routes.cluster_routes_cached(
-        pd.DataFrame(file_results),
-        [r["segment"] for r in file_results],
-        path,
-        cache_dir,
-        cache_df=cache_df,
-        config=config.clustering,
-    )
-
-    for i, r in enumerate(file_results):
-        r["cluster_id"] = clusters["cluster_id"].iat[i]
-        r["cluster_name"] = clusters["cluster_name"].iat[i]
-
-    return cluster_miss
-
-
 def build_commute_columns(
     commutes: pd.DataFrame,
     path: str | PathLike[str],
@@ -445,57 +390,40 @@ def build_commute_columns(
         else:
             results.extend(file_splits[fn])
 
-    cluster_miss = False
+    if cache_dir is not None and new_rows is not None:
+        with cache_db.open_db(cache_dir) as conn:
+            conn.executemany(
+                "INSERT INTO commutes"
+                " (filename, segment, date, description, direction,"
+                " distance, elapsed_time_s, moving_time_s)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        fn,
+                        cache_db.segment_to_db(row["segment"]),
+                        str(row["date"]),
+                        row["description"],
+                        row["direction"],
+                        cache_db.to_sql(row["distance"]),
+                        cache_db.to_sql(row["elapsed_time_s"]),
+                        cache_db.to_sql(row["moving_time_s"]),
+                    )
+                    for fn, row in new_rows.iterrows()
+                ],
+            )
+
     if config.clustering is not None:
-        file_results = [r for r in results if pd.notna(r["filename"])]
-        csv_results = [r for r in results if pd.isna(r["filename"])]
-        cluster_miss = load_cluster_columns(
-            file_results,
-            csv_results,
-            cache_df,
+        clusters = routes.cluster_routes_cached(
+            pd.DataFrame(results),
+            [r["segment"] for r in results],
             path,
             cache_dir,
-            config,
+            "commutes",
+            config.clustering,
         )
-
-    if cache_dir is not None and (new_rows is not None or cluster_miss):
-        with cache_db.open_db(cache_dir) as conn:
-            if new_rows is not None:
-                conn.executemany(
-                    "INSERT INTO commutes"
-                    " (filename, segment, date, description, direction,"
-                    " distance, elapsed_time_s, moving_time_s)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    [
-                        (
-                            fn,
-                            cache_db.segment_to_db(row["segment"]),
-                            str(row["date"]),
-                            row["description"],
-                            row["direction"],
-                            cache_db.to_sql(row["distance"]),
-                            cache_db.to_sql(row["elapsed_time_s"]),
-                            cache_db.to_sql(row["moving_time_s"]),
-                        )
-                        for fn, row in new_rows.iterrows()
-                    ],
-                )
-
-            if cluster_miss:
-                conn.executemany(
-                    "UPDATE commutes"
-                    " SET cluster_id=?, cluster_name=?"
-                    " WHERE filename=? AND segment=?",
-                    [
-                        (
-                            cache_db.to_sql(r["cluster_id"]),
-                            cache_db.to_sql(r["cluster_name"]),
-                            r["filename"],
-                            cache_db.segment_to_db(r["segment"]),
-                        )
-                        for r in file_results
-                    ],
-                )
+        for i, r in enumerate(results):
+            r["cluster_id"] = clusters["cluster_id"].iat[i]
+            r["cluster_name"] = clusters["cluster_name"].iat[i]
 
     return results
 

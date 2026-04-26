@@ -255,59 +255,36 @@ def build_activity_columns(
         for date, tz in zip(calcs.index, calcs["timezone_used"])
     ]
 
-    cluster_miss = False
+    if cache_dir is not None and miss_map:
+        with cache_db.open_db(cache_dir) as conn:
+            conn.executemany(
+                "INSERT INTO activities"
+                " (filename, segment, timezone, has_location,"
+                " max_heart_rate, estimated_ftp)"
+                " VALUES (?, -1, ?, ?, ?, ?)",
+                [
+                    (
+                        r["filename"],
+                        cache_db.to_sql(r["timezone"]),
+                        int(r["has_location"]),
+                        cache_db.to_sql(r["max_heart_rate"]),
+                        cache_db.to_sql(r["estimated_ftp"]),
+                    )
+                    for r in miss_map.values()
+                ],
+            )
+
     if config.clustering is not None:
-        clusters, cluster_miss = routes.cluster_routes_cached(
+        clusters = routes.cluster_routes_cached(
             csv,
             None,
             path,
             cache_dir,
-            cache_df=(
-                cache_df
-                if cache_df is not None and not cache_df.empty
-                else None
-            ),
-            config=config.clustering,
+            "activities",
+            config.clustering,
         )
         calcs["cluster_id"] = clusters["cluster_id"]
         calcs["cluster_name"] = clusters["cluster_name"]
-
-    if cache_dir is not None and (miss_map or cluster_miss):
-        with cache_db.open_db(cache_dir) as conn:
-            if miss_map:
-                conn.executemany(
-                    "INSERT INTO activities"
-                    " (filename, segment, timezone, has_location,"
-                    " max_heart_rate, estimated_ftp)"
-                    " VALUES (?, -1, ?, ?, ?, ?)",
-                    [
-                        (
-                            r["filename"],
-                            cache_db.to_sql(r["timezone"]),
-                            int(r["has_location"]),
-                            cache_db.to_sql(r["max_heart_rate"]),
-                            cache_db.to_sql(r["estimated_ftp"]),
-                        )
-                        for r in miss_map.values()
-                    ],
-                )
-
-            if cluster_miss:
-                fn = csv["Filename"].dropna()
-                fn = fn[~fn.duplicated()]
-                conn.executemany(
-                    "UPDATE activities"
-                    " SET cluster_id=?, cluster_name=?"
-                    " WHERE filename=? AND segment=-1",
-                    [
-                        (
-                            cache_db.to_sql(calcs.at[idx, "cluster_id"]),
-                            cache_db.to_sql(calcs.at[idx, "cluster_name"]),
-                            filename,
-                        )
-                        for idx, filename in fn.items()
-                    ],
-                )
 
     return calcs
 

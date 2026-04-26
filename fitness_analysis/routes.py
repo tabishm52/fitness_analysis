@@ -1,10 +1,14 @@
 """GPS route clustering for bicycle activities."""
 
+import dataclasses
+import hashlib
 import itertools
+import json
 from collections.abc import Iterable, Iterator
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from os import PathLike
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -520,26 +524,53 @@ def cluster_routes(
     )
 
 
+def cluster_fingerprint(
+    keys: Iterable[tuple[str, int] | None],
+    config: RouteClusterConfig,
+) -> str:
+    """Compute a cache fingerprint for a set of activities and config.
+
+    Args:
+        keys: ``cache_key`` results for all activities, including ``None``
+            for fileless entries. Order and duplicates do not matter.
+        config: Clustering configuration.
+
+    Returns:
+        MD5 hex digest string.
+    """
+
+    config_dict = {
+        f.name: getattr(config, f.name)
+        for f in dataclasses.fields(config)
+        if f.init  # exclude raw_csv (non-init column-name flag)
+    }
+
+    file_keys = sorted({k for k in keys if k is not None})
+    payload = json.dumps(
+        {"keys": file_keys, "config": config_dict}, sort_keys=True
+    )
+
+    return hashlib.md5(payload.encode()).hexdigest()
+
+
 def cluster_routes_cached(
     activities: pd.DataFrame,
     segments: Iterable[int | None] | None,
     path: str | PathLike[str],
-    cache_dir: str | PathLike[str] | None = None,
-    cache_df: pd.DataFrame | None = None,
+    cache_dir: str | PathLike[str] | None,
+    table: Literal["activities", "commutes"],
     config: RouteClusterConfig = RouteClusterConfig(),
-) -> tuple[pd.DataFrame, bool]:
-    """Cluster bicycle routes, using a pre-loaded cache when provided.
+) -> pd.DataFrame:
+    """Cluster bicycle routes, reading from and writing to the cache DB.
 
-    Cache hit condition: ``cache_df`` contains ``cluster_id`` and
-    ``cluster_name`` columns with entries for every file-based activity in
-    ``activities``. Any missing entry triggers a full recompute, as does
-    passing ``cache_df=None``. Cache persistence is the caller's
-    responsibility.
+    Uses a fingerprint of the (filename, segment) pairs and clustering config
+    to detect staleness. Any change to the activity set or config parameters
+    forces a full recompute; otherwise cluster columns are read directly from
+    the DB.
 
-    Cache keys are always composite ``(filename, segment)`` pairs. When
-    ``segments`` is ``None``, a sentinel of ``-1`` is used for the segment
-    component. ``cache_df`` rows without a ``"segment"`` column also resolve
-    to ``-1``, so the strava path (no segments) works without a segment column.
+    Cache persistence (SELECT, UPDATE, fingerprint upsert) is handled
+    internally. The rows being clustered must already exist in the DB before
+    this function is called so that the UPDATE has rows to write into.
 
     Args:
         activities: Activity DataFrame. Must have columns matching
@@ -547,51 +578,71 @@ def cluster_routes_cached(
         segments: Per-activity segment indices, or ``None`` to treat all
             activities as whole-file.
         path: Strava export directory (passed to ``cluster_routes``).
-        cache_dir: Records cache directory (passed to ``cluster_routes``).
-        cache_df: Already-loaded activities cache indexed by filename.
+        cache_dir: Records cache directory. If ``None``, clustering is always
+            computed and no DB I/O is performed.
+        table: DB table to read from and write cluster columns into.
         config: Clustering configuration.
 
     Returns:
-        Tuple of:
-        - ``clusters``: ``cluster_id`` and ``cluster_name`` columns with the
-          same index as ``activities``.
-        - ``cache_miss``: True when clustering was recomputed.
+        DataFrame with ``cluster_id`` and ``cluster_name`` columns, indexed
+        like ``activities``.
     """
 
-    cache_cols = {"cluster_id", "cluster_name"}
-    if cache_df is None or not cache_cols.issubset(cache_df.columns):
-        return (
-            cluster_routes(activities, segments, path, cache_dir, config),
-            True,
-        )
+    if cache_dir is None:
+        return cluster_routes(activities, segments, path, cache_dir, config)
 
     filenames = activities[config.filename_col]
     segs = segments if segments is not None else itertools.repeat(None)
-    result_keys = [
-        cache_db.cache_key(fn, seg) for fn, seg in zip(filenames, segs)
-    ]
-    cache_lookup = {
-        cache_db.cache_key(fn, row.get("segment")): (
-            row["cluster_id"],
-            row["cluster_name"],
-        )
-        for fn, row in cache_df.iterrows()
-    }
+    keys = [cache_db.cache_key(fn, seg) for fn, seg in zip(filenames, segs)]
+    expected_fp = cluster_fingerprint(keys, config)
 
-    file_keys = [k for k in result_keys if k is not None]
-    if not all(k in cache_lookup for k in file_keys):
-        return (
-            cluster_routes(activities, segments, path, cache_dir, config),
-            True,
+    with cache_db.open_db(cache_dir) as conn:
+        row = conn.execute(
+            "SELECT fingerprint FROM cluster_fingerprints"
+            f" WHERE table_name='{table}'",
+        ).fetchone()
+        stored_fp = row[0] if row else None
+
+    if stored_fp == expected_fp:
+        fns = list({k[0] for k in keys if k is not None})
+        assert fns, "cache hit with no file-based activities"
+
+        marks = ",".join("?" * len(fns))
+        with cache_db.open_db(cache_dir) as conn:
+            rows = conn.execute(
+                "SELECT filename, segment, cluster_id, cluster_name"
+                f" FROM {table} WHERE filename IN ({marks})",
+                fns,
+            ).fetchall()
+        lookup = {(fn, seg): (cid, cname) for fn, seg, cid, cname in rows}
+
+        return pd.DataFrame(
+            [lookup.get(k, (pd.NA, None)) for k in keys],
+            columns=["cluster_id", "cluster_name"],
+            index=activities.index,
+        ).astype({"cluster_id": "Int64"})
+
+    result = cluster_routes(activities, segments, path, cache_dir, config)
+
+    with cache_db.open_db(cache_dir) as conn:
+        conn.executemany(
+            f"UPDATE {table} SET cluster_id=?, cluster_name=?"
+            " WHERE filename=? AND segment=?",
+            [
+                (
+                    cache_db.to_sql(result.at[idx, "cluster_id"]),
+                    cache_db.to_sql(result.at[idx, "cluster_name"]),
+                    k[0],
+                    k[1],
+                )
+                for idx, k in zip(activities.index, keys)
+                if k is not None
+            ],
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO cluster_fingerprints"
+            " (table_name, fingerprint) VALUES (?, ?)",
+            (table, expected_fp),
         )
 
-    clusters = [
-        cache_lookup[k] if k is not None else (pd.NA, None) for k in result_keys
-    ]
-    return pd.DataFrame(
-        {
-            "cluster_id": pd.array([c[0] for c in clusters], dtype="Int64"),
-            "cluster_name": [c[1] for c in clusters],
-        },
-        index=activities.index,
-    ), False
+    return result
