@@ -121,13 +121,14 @@ def invalidate_commutes_cache(
             fns, segs = zip(*rows)
             records.invalidate_records_cache(fns, segs, cache_dir)
 
-        if files is None:
-            conn.execute("DELETE FROM commutes")
-        else:
-            conn.execute(
-                f"DELETE FROM commutes WHERE filename IN ({marks})",
-                files_list,
-            )
+        with conn:
+            if files is None:
+                conn.execute("DELETE FROM commutes")
+            else:
+                conn.execute(
+                    f"DELETE FROM commutes WHERE filename IN ({marks})",
+                    files_list,
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -349,10 +350,11 @@ def load_commute_splits(
     miss_rows = file_commutes[file_commutes["Filename"].isin(misses)]
 
     with cache_db.open_db(cache_dir) as conn:
-        for _, activity in miss_rows.iterrows():
-            splits[activity["Filename"]] = parse_commute_file(
-                activity, path, config, cache_dir, conn
-            )
+        with conn:
+            for _, activity in miss_rows.iterrows():
+                splits[activity["Filename"]] = parse_commute_file(
+                    activity, path, config, cache_dir, conn
+                )
 
     return splits
 

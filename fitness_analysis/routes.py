@@ -625,24 +625,25 @@ def cluster_routes_cached(
     result = cluster_routes(activities, segments, path, cache_dir, config)
 
     with cache_db.open_db(cache_dir) as conn:
-        conn.executemany(
-            f"UPDATE {table} SET cluster_id=?, cluster_name=?"
-            " WHERE filename=? AND segment=?",
-            [
-                (
-                    cache_db.to_sql(result.at[idx, "cluster_id"]),
-                    cache_db.to_sql(result.at[idx, "cluster_name"]),
-                    k[0],
-                    k[1],
-                )
-                for idx, k in zip(activities.index, keys)
-                if k is not None
-            ],
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO cluster_fingerprints"
-            " (table_name, fingerprint) VALUES (?, ?)",
-            (table, expected_fp),
-        )
+        with conn:
+            conn.executemany(
+                f"UPDATE {table} SET cluster_id=?, cluster_name=?"
+                " WHERE filename=? AND segment=?",
+                [
+                    (
+                        cache_db.to_sql(result.at[idx, "cluster_id"]),
+                        cache_db.to_sql(result.at[idx, "cluster_name"]),
+                        k[0],
+                        k[1],
+                    )
+                    for idx, k in zip(activities.index, keys)
+                    if k is not None
+                ],
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO cluster_fingerprints"
+                " (table_name, fingerprint) VALUES (?, ?)",
+                (table, expected_fp),
+            )
 
     return result

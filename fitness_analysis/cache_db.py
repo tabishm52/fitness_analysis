@@ -105,19 +105,20 @@ def open_db(
 ) -> Generator[sqlite3.Connection]:
     """Open (or create) the cache DB, ensure tables exist, and yield connection.
 
-    Uses ``autocommit=True`` — callers do not need to commit. The connection is
+    Uses ``autocommit=False``. Callers should wrap write operations in a
+    ``with conn:`` block to commit them as a transaction. The connection is
     closed on exit even if an exception is raised.
 
     Args:
         cache_dir: Directory containing the cache database.
 
     Yields:
-        Open ``sqlite3.Connection`` with autocommit enabled.
+        Open ``sqlite3.Connection``.
     """
 
-    conn = sqlite3.connect(db_path(cache_dir), autocommit=True)
-    ensure_tables(conn)
+    conn = sqlite3.connect(db_path(cache_dir), autocommit=False)
     try:
+        ensure_tables(conn)
         yield conn
     finally:
         conn.close()

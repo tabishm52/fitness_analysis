@@ -98,15 +98,16 @@ def invalidate_activities_cache(
         return
 
     with cache_db.open_db(cache_dir) as conn:
-        if files is None:
-            conn.execute("DELETE FROM activities")
-        else:
-            files_list = list(files)
-            marks = ",".join("?" * len(files_list))
-            conn.execute(
-                f"DELETE FROM activities WHERE filename IN ({marks})",
-                files_list,
-            )
+        with conn:
+            if files is None:
+                conn.execute("DELETE FROM activities")
+            else:
+                files_list = list(files)
+                marks = ",".join("?" * len(files_list))
+                conn.execute(
+                    f"DELETE FROM activities WHERE filename IN ({marks})",
+                    files_list,
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -235,10 +236,11 @@ def load_file_metrics(
         records.warm_records_cache(misses, None, path, cache_dir)
 
         with cache_db.open_db(cache_dir) as conn:
-            miss_map = {
-                f: parse_activity_file(f, path, config, cache_dir, conn)
-                for f in misses
-            }
+            with conn:
+                miss_map = {
+                    f: parse_activity_file(f, path, config, cache_dir, conn)
+                    for f in misses
+                }
 
         rows = [
             r if r is not None else miss_map[f] for f, r in zip(files, rows)
