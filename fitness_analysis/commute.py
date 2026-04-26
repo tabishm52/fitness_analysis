@@ -1,5 +1,6 @@
 """Functions for processing Strava bicycling commutes."""
 
+import sqlite3
 from collections.abc import Callable, Iterable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
@@ -188,8 +189,9 @@ def segment_metrics(
 def parse_commute_file(
     activity: pd.Series,
     path: str | PathLike[str],
-    cache_dir: str | PathLike[str] | None,
     config: CommuteConfig,
+    cache_dir: str | PathLike[str] | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> list[dict[str, Any]]:
     """Calculate summary metrics for one commute activity.
 
@@ -197,13 +199,16 @@ def parse_commute_file(
     greater than ``config.delta``, and returns metrics for each split.
 
     When ``cache_dir`` is set and the file produces multiple splits, each
-    split's records are written to the parquet cache via ``cache_record``.
+    split's records are written to the parquet cache. When ``conn`` is
+    provided, the computed splits are inserted into the cache as each file is
+    parsed.
 
     Args:
         activity: Activity row from the Strava CSV.
         path: Strava export directory.
-        cache_dir: Optional cache directory for parsed activity records.
         config: Configuration parameters.
+        cache_dir: Optional cache directory for parsed activity records.
+        conn: Optional open DB connection.
 
     Returns:
         List of metric dicts, one per commute split.
@@ -237,6 +242,27 @@ def parse_commute_file(
                 group, activity["Filename"], seg_idx, cache_dir
             )
         results.append(segment_metrics(activity, group, seg_idx, config))
+
+    if conn is not None:
+        conn.executemany(
+            "INSERT OR REPLACE INTO commutes"
+            " (filename, segment, date, description, direction,"
+            " distance, elapsed_time_s, moving_time_s)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    activity["Filename"],
+                    cache_db.segment_to_db(split["segment"]),
+                    str(split["date"]),
+                    split["description"],
+                    split["direction"],
+                    cache_db.to_sql(split["distance"]),
+                    cache_db.to_sql(split["elapsed_time_s"]),
+                    cache_db.to_sql(split["moving_time_s"]),
+                )
+                for split in results
+            ],
+        )
 
     return results
 
@@ -284,12 +310,10 @@ def load_commute_splits(
     cache_dir: str | PathLike[str] | None,
     config: CommuteConfig,
     cache: dict[str, list[dict[str, Any]]] | None,
-) -> tuple[dict[str, list[dict[str, Any]]], pd.DataFrame | None]:
-    """Load commute splits for a set of file-based activities.
+) -> dict[str, list[dict[str, Any]]]:
+    """Compute per-commute metrics, using a pre-loaded cache when provided.
 
-    Computes per-activity commute splits. When ``cache`` is provided, uses
-    the commutes cache for hits and processes only misses. When ``cache`` is
-    ``None`` (no caching), all files are parsed in parallel.
+    Cache misses are computed and written to the DB as each file is parsed.
 
     Args:
         file_commutes: Commute activities with a non-NaN ``Filename`` column.
@@ -299,11 +323,7 @@ def load_commute_splits(
         cache: Commutes cache keyed by filename, or ``None`` to skip caching.
 
     Returns:
-        Tuple of:
-        - ``splits``: Dict mapping each filename to its list of commute split
-          dicts.
-        - ``new_rows``: DataFrame of newly computed rows to append to the
-          cache, indexed by filename. ``None`` when there are no new rows.
+        Dict mapping each filename to its list of commute split dicts.
     """
 
     files = file_commutes["Filename"]
@@ -313,33 +333,28 @@ def load_commute_splits(
         fn = partial(parse_commute_file, path=path, config=config)
         with ProcessPoolExecutor() as ex:
             splits_list = list(ex.map(fn, (activity for _, activity in rows)))
-        return (
-            {
-                activity["Filename"]: splits
-                for (_, activity), splits in zip(rows, splits_list)
-            },
-            None,
-        )
+        return {
+            activity["Filename"]: splits
+            for (_, activity), splits in zip(rows, splits_list)
+        }
 
     splits = {f: cache.get(f) for f in files}
     misses = [f for f, r in splits.items() if r is None]
 
     if not misses:
-        return splits, None
+        return splits
 
     records.warm_records_cache(misses, None, path, cache_dir)
 
     miss_rows = file_commutes[file_commutes["Filename"].isin(misses)]
-    for _, activity in miss_rows.iterrows():
-        splits[activity["Filename"]] = parse_commute_file(
-            activity, path, cache_dir, config
-        )
 
-    new_rows = pd.DataFrame(
-        split for f in misses for split in splits[f]
-    ).set_index("filename")
+    with cache_db.open_db(cache_dir) as conn:
+        for _, activity in miss_rows.iterrows():
+            splits[activity["Filename"]] = parse_commute_file(
+                activity, path, config, cache_dir, conn
+            )
 
-    return splits, new_rows
+    return splits
 
 
 def build_commute_columns(
@@ -352,7 +367,7 @@ def build_commute_columns(
     """Compute all derived per-commute columns with a cache lookup.
 
     Reads the commutes cache, processes misses, and optionally runs route
-    clustering. Writes updated cache at the end.
+    clustering. Cache misses are written to the DB as each file is parsed.
 
     Args:
         commutes: Commute activities from the Strava CSV.
@@ -371,7 +386,7 @@ def build_commute_columns(
     cache = load_commutes_cache(cache_dir) if cache_dir is not None else None
 
     file_mask = commutes["Filename"].notna()
-    file_splits, new_rows = load_commute_splits(
+    file_splits = load_commute_splits(
         commutes[file_mask], path, cache_dir, config, cache
     )
 
@@ -393,28 +408,6 @@ def build_commute_columns(
             results.append(csv_splits[utc_date])
         else:
             results.extend(file_splits[fn])
-
-    if cache_dir is not None and new_rows is not None:
-        with cache_db.open_db(cache_dir) as conn:
-            conn.executemany(
-                "INSERT INTO commutes"
-                " (filename, segment, date, description, direction,"
-                " distance, elapsed_time_s, moving_time_s)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    (
-                        fn,
-                        cache_db.segment_to_db(row["segment"]),
-                        str(row["date"]),
-                        row["description"],
-                        row["direction"],
-                        cache_db.to_sql(row["distance"]),
-                        cache_db.to_sql(row["elapsed_time_s"]),
-                        cache_db.to_sql(row["moving_time_s"]),
-                    )
-                    for fn, row in new_rows.iterrows()
-                ],
-            )
 
     if config.clustering is not None:
         clusters = routes.cluster_routes_cached(

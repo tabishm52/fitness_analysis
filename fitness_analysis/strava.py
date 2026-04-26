@@ -1,5 +1,6 @@
 """Functions for processing Strava bicycling activities."""
 
+import sqlite3
 from collections.abc import Callable, Iterable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
@@ -116,10 +117,23 @@ def invalidate_activities_cache(
 def parse_activity_file(
     filename: str | float,
     path: str | PathLike[str],
-    cache_dir: str | PathLike[str] | None,
     config: ActivitiesConfig,
+    cache_dir: str | PathLike[str] | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> dict[str, Any]:
-    """Parse a single activity file and compute metrics."""
+    """Parse a single activity file and compute metrics.
+
+    Args:
+        filename: Activity filename, or NaN for activities without a file.
+        path: Strava export directory.
+        config: Activities configuration.
+        cache_dir: Optional directory for the records parquet cache.
+        conn: Optional open DB connection. When provided, the computed metrics
+            are inserted into the cache as each file is parsed.
+
+    Returns:
+        Metrics dict for the activity.
+    """
 
     activity_records = records.parse_record_cached(
         filename, None, path, cache_dir
@@ -147,13 +161,30 @@ def parse_activity_file(
     else:
         estimated_ftp = np.nan
 
-    return {
+    result = {
         "filename": filename,
         "timezone": timezone,
         "has_location": has_location,
         "max_heart_rate": max_hr,
         "estimated_ftp": estimated_ftp,
     }
+
+    if conn is not None:
+        conn.execute(
+            "INSERT OR REPLACE INTO activities"
+            " (filename, segment, timezone, has_location,"
+            " max_heart_rate, estimated_ftp)"
+            " VALUES (?, -1, ?, ?, ?, ?)",
+            (
+                result["filename"],
+                cache_db.to_sql(result["timezone"]),
+                int(result["has_location"]),
+                cache_db.to_sql(result["max_heart_rate"]),
+                cache_db.to_sql(result["estimated_ftp"]),
+            ),
+        )
+
+    return result
 
 
 def load_file_metrics(
@@ -162,8 +193,10 @@ def load_file_metrics(
     cache_dir: str | PathLike[str] | None,
     config: ActivitiesConfig,
     cache: dict[str, dict[str, Any]] | None = None,
-) -> tuple[pd.DataFrame, dict[str, dict[str, Any]]]:
-    """Load per-activity metrics, using a pre-loaded cache when provided.
+) -> pd.DataFrame:
+    """Compute per-activity metrics, using a pre-loaded cache when provided.
+
+    Cache misses are computed and written to the DB as each file is parsed.
 
     Args:
         files: Activity filenames aligned to the CSV index.
@@ -173,26 +206,18 @@ def load_file_metrics(
         cache: Activities cache keyed by filename, or ``None`` to skip caching.
 
     Returns:
-        Tuple of:
-        - ``results``: Metrics DataFrame aligned to ``files.index``.
-        - ``miss_map``: Newly computed rows keyed by filename. Empty when
-          every entry was a cache hit or had no file.
+        Metrics DataFrame aligned to ``files.index``.
     """
 
     if cache is None:
         with ProcessPoolExecutor() as ex:
             results = list(
                 ex.map(
-                    partial(
-                        parse_activity_file,
-                        path=path,
-                        cache_dir=None,
-                        config=config,
-                    ),
+                    partial(parse_activity_file, path=path, config=config),
                     files,
                 )
             )
-        return pd.DataFrame(results, index=files.index), {}
+        return pd.DataFrame(results, index=files.index)
 
     no_file_result = {
         "timezone": np.nan,
@@ -208,16 +233,18 @@ def load_file_metrics(
 
     if misses:
         records.warm_records_cache(misses, None, path, cache_dir)
-        miss_map = {
-            f: parse_activity_file(f, path, cache_dir, config) for f in misses
-        }
+
+        with cache_db.open_db(cache_dir) as conn:
+            miss_map = {
+                f: parse_activity_file(f, path, config, cache_dir, conn)
+                for f in misses
+            }
+
         rows = [
             r if r is not None else miss_map[f] for f, r in zip(files, rows)
         ]
-    else:
-        miss_map = {}
 
-    return pd.DataFrame(rows, index=files.index), miss_map
+    return pd.DataFrame(rows, index=files.index)
 
 
 def build_activity_columns(
@@ -230,8 +257,8 @@ def build_activity_columns(
     """Compute all derived per-activity columns with a cache lookup.
 
     Reads the activities cache, computes file metrics (timezone, heart rate,
-    FTP), infers trainer status, calculates local dates, and optionally runs
-    route clustering. Writes updated cache at the end.
+    FTP), infers trainer status, and calculates local dates. Cache misses are
+    written to the DB as each file is parsed. Optionally runs route clustering.
 
     Args:
         csv: Raw Strava CSV indexed by UTC activity date.
@@ -246,9 +273,7 @@ def build_activity_columns(
 
     cache = load_activities_cache(cache_dir) if cache_dir is not None else None
 
-    calcs, miss_map = load_file_metrics(
-        csv["Filename"], path, cache_dir, config, cache
-    )
+    calcs = load_file_metrics(csv["Filename"], path, cache_dir, config, cache)
 
     calcs["trainer"] = (csv["Activity Type"] == "Virtual Ride") | (
         ~calcs["has_location"] & ~csv["Filename"].isna()
@@ -260,25 +285,6 @@ def build_activity_columns(
         date.tz_localize("UTC").tz_convert(tz).tz_localize(None)
         for date, tz in zip(calcs.index, calcs["timezone_used"])
     ]
-
-    if cache_dir is not None and miss_map:
-        with cache_db.open_db(cache_dir) as conn:
-            conn.executemany(
-                "INSERT INTO activities"
-                " (filename, segment, timezone, has_location,"
-                " max_heart_rate, estimated_ftp)"
-                " VALUES (?, -1, ?, ?, ?, ?)",
-                [
-                    (
-                        r["filename"],
-                        cache_db.to_sql(r["timezone"]),
-                        int(r["has_location"]),
-                        cache_db.to_sql(r["max_heart_rate"]),
-                        cache_db.to_sql(r["estimated_ftp"]),
-                    )
-                    for r in miss_map.values()
-                ],
-            )
 
     if config.clustering is not None:
         clusters = routes.cluster_routes_cached(
