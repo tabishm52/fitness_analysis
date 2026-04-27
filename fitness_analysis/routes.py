@@ -71,6 +71,53 @@ class RouteClusterConfig:
 
 
 @dataclass
+class ClusterResult:
+    """Cached cluster assignment for one activity or commute segment.
+
+    Attributes:
+        cluster_id: Integer cluster ID (0 = most frequent route), or ``None``
+            for unmatched activities.
+        cluster_name: Modal activity name within the cluster, or ``None`` for
+            unmatched activities.
+    """
+
+    cluster_id: int | None = None
+    cluster_name: str | None = None
+
+    @classmethod
+    def select_sql(cls, table: str, filenames: list) -> str:
+        """SELECT SQL for cache-hit reads against ``table``."""
+        marks = ",".join("?" * len(filenames))
+        return (
+            f"SELECT filename, segment, cluster_id, cluster_name"
+            f" FROM {table} WHERE filename IN ({marks})"
+        )
+
+    @classmethod
+    def update_sql(cls, table: str) -> str:
+        """UPDATE SQL for writing cluster assignments back to ``table``."""
+        return (
+            f"UPDATE {table} SET cluster_id=?, cluster_name=?"
+            " WHERE filename=? AND segment=?"
+        )
+
+    def to_update_params(self, filename: str, segment: int) -> tuple:
+        """Return positional params for ``update_sql`` (SET then WHERE)."""
+        return (
+            cache_db.to_sql(self.cluster_id),
+            cache_db.to_sql(self.cluster_name),
+            filename,
+            segment,
+        )
+
+    @classmethod
+    def from_db_row(cls, row: tuple) -> "ClusterResult":
+        """Construct from a ``select_sql`` row."""
+        *_, cid, cname = row
+        return cls(cluster_id=cid, cluster_name=cname)
+
+
+@dataclass
 class ClusterFingerprint:
     """Row in the ``cluster_fingerprints`` table.
 
@@ -488,63 +535,49 @@ def partition_and_cluster(
     return all_clusters
 
 
-# ---------------------------------------------------------------------------
-# Top-level entry points
-# ---------------------------------------------------------------------------
-
-
-def cluster_routes(
+def compute_clusters(
     activities: pd.DataFrame,
     segments: Iterable[int | None] | None,
     path: str | PathLike[str],
-    cache_dir: str | PathLike[str] | None = None,
-    config: RouteClusterConfig | None = None,
-) -> pd.DataFrame:
+    cache_dir: str | PathLike[str] | None,
+    config: RouteClusterConfig,
+) -> list[ClusterResult]:
     """Cluster bicycle activities by GPS route similarity or activity name.
 
-    Activities with GPS data are clustered by discrete Fréchet distance.
+    Activities with GPS data are clustered by discrete Fréchet distance. The
+    GPS pipeline is computed as follows:
+    1. Load latitude/longitude data for each activity file.
+    2. Partition activities based on shared start and end locations.
+    3. Project each partition into its local UTM zone and resample routes to a
+       point count proportional to route length.
+    4. Compute pairwise discrete Fréchet distances within each partition.
+    5. Cluster within each partition on the distance matrix.
+
     File-based activities that yield no GPS data (e.g. trainer rides on a
     non-simulated course) are clustered by activity description instead.
-    Activities with no file are not clustered.
 
-    All clusters share a single ID space ordered by size (0 = most frequent).
-
-    The GPS pipeline:
-    1. Loads latitude/longitude data for each activity file.
-    2. Partitions activities based on shared start and end locations.
-    3. Projects each partition into its local UTM zone and resamples routes
-       to a point count proportional to route length.
-    4. Computes pairwise discrete Fréchet distances within each partition.
-    5. Clusters within each partition on the distance matrix.
+    All clusters are merged into single ID space ordered by size (0 = most
+    frequent). Activities with no file are not clustered.
 
     Args:
-        activities: Activity data from ``load_strava_activities`` or
-            ``load_strava_activities_raw``.
+        activities: Activity data with filename and name columns per ``config``.
         segments: Per-activity segment indices, or ``None`` to treat all
             activities as whole-file.
-        path: Strava export directory (passed to record loading).
-        cache_dir: Optional cache directory for the records parquet cache.
-            If omitted, activity files are parsed on every call.
-        config: Clustering parameters. Defaults to ``RouteClusterConfig()``.
+        path: Strava export directory.
+        cache_dir: Optional records parquet cache directory.
+        config: Clustering configuration.
 
     Returns:
-        DataFrame with the same index as ``activities`` containing:
-        - ``cluster_id``: Integer cluster ID (0 = most frequent route),
-          ``pd.NA`` for unmatched or no-file activities.
-        - ``cluster_name``: Mode of activity names within the cluster,
-          ``None`` for unmatched activities.
+        List of ``ClusterResult`` aligned to ``activities``, one per row.
     """
-
-    if config is None:
-        config = RouteClusterConfig()
 
     has_file = activities[config.filename_col].notna()
     valid_idx, valid_routes = extract_route_features(
         activities[has_file], segments, path, cache_dir, config
     )
 
-    cluster_id_arr = pd.array([pd.NA] * len(activities), dtype=pd.Int64Dtype())
-    cluster_name_arr = np.full(len(activities), None, dtype=object)
+    # Start every activity as unmatched
+    results = [ClusterResult() for _ in activities.index]
 
     # GPS clustering, named by modal activity description
     gps_clusters = (
@@ -575,13 +608,57 @@ def cluster_routes(
     )
     for global_id, (cluster_name, idx_list) in enumerate(all_clusters):
         for act_idx in idx_list:
-            cluster_id_arr[pos_of[act_idx]] = global_id
-            cluster_name_arr[pos_of[act_idx]] = cluster_name
+            results[pos_of[act_idx]] = ClusterResult(
+                cluster_id=global_id, cluster_name=cluster_name
+            )
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Top-level entry points
+# ---------------------------------------------------------------------------
+
+
+def cluster_routes(
+    activities: pd.DataFrame,
+    segments: Iterable[int | None] | None,
+    path: str | PathLike[str],
+    cache_dir: str | PathLike[str] | None = None,
+    config: RouteClusterConfig | None = None,
+) -> pd.DataFrame:
+    """Cluster bicycle activities by GPS route similarity or activity name.
+
+    Activities with GPS data are clustered by route similarity. File-based
+    activities that yield no GPS data are clustered by activity description
+    instead. Activities with no file are not clustered. All clusters share a
+    single ID space ordered by size (0 = most frequent).
+
+    Args:
+        activities: Activity data from ``load_strava_activities`` or
+            ``load_strava_activities_raw``.
+        segments: Per-activity segment indices, or ``None`` to treat all
+            activities as whole-file.
+        path: Strava export directory.
+        cache_dir: Optional cache directory for the records parquet cache.
+            If omitted, activity files are parsed on every call.
+        config: Clustering parameters. Defaults to ``RouteClusterConfig()``.
+
+    Returns:
+        DataFrame with the same index as ``activities`` containing:
+        - ``cluster_id``: Integer cluster ID (0 = most frequent route),
+          ``pd.NA`` for unmatched or no-file activities.
+        - ``cluster_name``: Mode of activity names within the cluster,
+          ``None`` for unmatched activities.
+    """
+
+    if config is None:
+        config = RouteClusterConfig()
 
     return pd.DataFrame(
-        {"cluster_id": cluster_id_arr, "cluster_name": cluster_name_arr},
+        compute_clusters(activities, segments, path, cache_dir, config),
         index=activities.index,
-    )
+    ).astype({"cluster_id": "Int64"})
 
 
 def cluster_routes_cached(
@@ -635,36 +712,28 @@ def cluster_routes_cached(
         fns = list({k[0] for k in keys if k is not None})
         assert fns, "cache hit with no file-based activities"
 
-        marks = ",".join("?" * len(fns))
         with cache_db.open_db(cache_dir) as conn:
             rows = conn.execute(
-                "SELECT filename, segment, cluster_id, cluster_name"
-                f" FROM {table} WHERE filename IN ({marks})",
-                fns,
+                ClusterResult.select_sql(table, fns), fns
             ).fetchall()
-        lookup = {(fn, seg): (cid, cname) for fn, seg, cid, cname in rows}
+        lookup = {
+            (row[0], row[1]): ClusterResult.from_db_row(row) for row in rows
+        }
+        results = [lookup.get(k, ClusterResult()) for k in keys]
 
-        return pd.DataFrame(
-            [lookup.get(k, (pd.NA, None)) for k in keys],
-            columns=["cluster_id", "cluster_name"],
-            index=activities.index,
-        ).astype({"cluster_id": "Int64"})
+        return pd.DataFrame(results, index=activities.index).astype(
+            {"cluster_id": "Int64"}
+        )
 
-    result = cluster_routes(activities, segments, path, cache_dir, config)
+    results = compute_clusters(activities, segments, path, cache_dir, config)
 
     with cache_db.open_db(cache_dir) as conn:
         with conn:
             conn.executemany(
-                f"UPDATE {table} SET cluster_id=?, cluster_name=?"
-                " WHERE filename=? AND segment=?",
+                ClusterResult.update_sql(table),
                 [
-                    (
-                        cache_db.to_sql(result.at[idx, "cluster_id"]),
-                        cache_db.to_sql(result.at[idx, "cluster_name"]),
-                        k[0],
-                        k[1],
-                    )
-                    for idx, k in zip(activities.index, keys)
+                    cr.to_update_params(k[0], k[1])
+                    for cr, k in zip(results, keys)
                     if k is not None
                 ],
             )
@@ -673,4 +742,6 @@ def cluster_routes_cached(
                 expected_fp.to_db_params(),
             )
 
-    return result
+    return pd.DataFrame(results, index=activities.index).astype(
+        {"cluster_id": "Int64"}
+    )
