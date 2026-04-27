@@ -121,6 +121,9 @@ class ClusterFingerprint:
         "INSERT OR REPLACE INTO cluster_fingerprints"
         " (table_name, fingerprint) VALUES (?, ?)"
     )
+    DELETE_SQL: ClassVar[str] = (
+        "DELETE FROM cluster_fingerprints WHERE table_name = ?"
+    )
 
     def to_db_params(self) -> tuple[str, str]:
         """Return positional params for ``INSERT_SQL``."""

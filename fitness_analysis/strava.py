@@ -143,6 +143,7 @@ def invalidate_activities_cache(
                     f"DELETE FROM activities WHERE filename IN ({marks})",
                     files_list,
                 )
+            conn.execute(routes.ClusterFingerprint.DELETE_SQL, ("activities",))
 
 
 # ---------------------------------------------------------------------------

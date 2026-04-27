@@ -177,6 +177,7 @@ def invalidate_commutes_cache(
                     f"DELETE FROM commutes WHERE filename IN ({marks})",
                     files_list,
                 )
+            conn.execute(routes.ClusterFingerprint.DELETE_SQL, ("commutes",))
 
 
 # ---------------------------------------------------------------------------
