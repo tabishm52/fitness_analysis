@@ -3,10 +3,10 @@
 import sqlite3
 from collections.abc import Callable, Iterable
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from functools import partial
 from os import PathLike
-from typing import Any
+from typing import ClassVar
 
 import numpy as np
 import pandas as pd
@@ -41,6 +41,69 @@ class CommuteConfig:
     )
 
 
+@dataclass(kw_only=True)
+class CommuteMetrics:
+    """Cached metrics for one commute segment.
+
+    Attributes:
+        date: Local date and time of the segment start.
+        description: Activity name from Strava.
+        direction: ``"Morning"`` or ``"Afternoon"``.
+        distance: Distance in miles, or ``None`` when GPS distance is absent.
+        elapsed_time_s: Total elapsed time in seconds.
+        moving_time_s: Moving time in seconds, or ``None`` when absent.
+        filename: Activity filename, or NaN for fileless activities.
+        segment: 1-based split index, or ``None`` for single-segment activities.
+    """
+
+    date: pd.Timestamp
+    description: str
+    direction: str
+    distance: float | None = None
+    elapsed_time_s: float
+    moving_time_s: float | None = None
+    filename: str | float
+    segment: int | None = None
+
+    SQL_COLS: ClassVar[str] = (
+        "filename, segment, date, description, direction,"
+        " distance, elapsed_time_s, moving_time_s"
+    )
+    INSERT_SQL: ClassVar[str] = (
+        f"INSERT OR REPLACE INTO commutes ({SQL_COLS})"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    SELECT_SQL: ClassVar[str] = f"SELECT {SQL_COLS} FROM commutes"
+
+    def to_db_params(self) -> tuple:
+        """Return positional params for ``INSERT_SQL``."""
+        return (
+            self.filename,
+            cache_db.segment_to_db(self.segment),
+            str(self.date),
+            self.description,
+            self.direction,
+            cache_db.to_sql(self.distance),
+            cache_db.to_sql(self.elapsed_time_s),
+            cache_db.to_sql(self.moving_time_s),
+        )
+
+    @classmethod
+    def from_db_row(cls, row: tuple) -> "CommuteMetrics":
+        """Construct from ``SELECT_SQL``."""
+        fn, seg, date, desc, direction, dist, elapsed_s, moving_s = row
+        return cls(
+            filename=fn,
+            segment=cache_db.segment_from_db(seg),
+            date=pd.Timestamp(date),
+            description=desc,
+            direction=direction,
+            distance=dist,
+            elapsed_time_s=elapsed_s,
+            moving_time_s=moving_s,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Cache management
 # ---------------------------------------------------------------------------
@@ -48,38 +111,23 @@ class CommuteConfig:
 
 def load_commutes_cache(
     cache_dir: str | PathLike[str],
-) -> dict[str, list[dict[str, Any]]]:
+) -> dict[str, list[CommuteMetrics]]:
     """Read the commutes cache from the database.
 
     Args:
         cache_dir: Cache directory containing the SQLite database.
 
     Returns:
-        Dict mapping each activity filename to its list of cached split dicts.
+        Dict mapping each activity filename to its list of cached split metrics.
     """
 
     with cache_db.open_db(cache_dir) as conn:
-        rows = conn.execute(
-            "SELECT filename, segment, date, description, direction,"
-            " distance, elapsed_time_s, moving_time_s FROM commutes"
-            " ORDER BY filename"
-        ).fetchall()
+        rows = conn.execute(CommuteMetrics.SELECT_SQL).fetchall()
 
     result = {}
-    for fn, seg, date, desc, direction, dist, elapsed_s, moving_s in rows:
-        result.setdefault(fn, []).append(
-            {
-                "date": pd.Timestamp(date),
-                "description": desc,
-                "direction": direction,
-                "distance": dist,
-                "elapsed_time_s": elapsed_s,
-                "moving_time_s": moving_s,
-                "filename": fn,
-                "segment": cache_db.segment_from_db(seg),
-            }
-        )
-
+    for row in rows:
+        m = CommuteMetrics.from_db_row(row)
+        result.setdefault(m.filename, []).append(m)
     return result
 
 
@@ -141,7 +189,7 @@ def segment_metrics(
     group: pd.DataFrame,
     seg_idx: int | None,
     config: CommuteConfig,
-) -> dict[str, Any]:
+) -> CommuteMetrics:
     """Compute summary metrics for one commute segment.
 
     Args:
@@ -152,7 +200,7 @@ def segment_metrics(
         config: Configuration parameters.
 
     Returns:
-        Metric dict for the segment.
+        Computed metrics for the segment.
     """
 
     timezone = utils.infer_timezone(group)
@@ -163,9 +211,7 @@ def segment_metrics(
     )
     elapsed_time_s = (group.index[-1] - group.index[0]).total_seconds()
 
-    if "distance" not in group.columns:
-        distance, moving_time_s = np.nan, np.nan
-    else:
+    if "distance" in group.columns:
         dist = group["distance"]
         distance = utils.KM_TO_MI * (dist.max() - dist.min())
         inactive_periods = utils.identify_inactive_periods(
@@ -174,17 +220,20 @@ def segment_metrics(
             config.min_stop_duration,
         )
         moving_time_s = float((~inactive_periods).sum())
+    else:
+        distance = None
+        moving_time_s = None
 
-    return {
-        "date": date,
-        "description": activity["Activity Name"],
-        "direction": direction,
-        "distance": distance,
-        "elapsed_time_s": elapsed_time_s,
-        "moving_time_s": moving_time_s,
-        "filename": activity["Filename"],
-        "segment": seg_idx,
-    }
+    return CommuteMetrics(
+        date=date,
+        description=activity["Activity Name"],
+        direction=direction,
+        distance=distance,
+        elapsed_time_s=elapsed_time_s,
+        moving_time_s=moving_time_s,
+        filename=activity["Filename"],
+        segment=seg_idx,
+    )
 
 
 def parse_commute_file(
@@ -193,7 +242,7 @@ def parse_commute_file(
     config: CommuteConfig,
     cache_dir: str | PathLike[str] | None = None,
     conn: sqlite3.Connection | None = None,
-) -> list[dict[str, Any]]:
+) -> list[CommuteMetrics]:
     """Calculate summary metrics for one commute activity.
 
     Loads the activity file, filters out long inactive periods, splits on gaps
@@ -212,7 +261,7 @@ def parse_commute_file(
         conn: Optional open DB connection.
 
     Returns:
-        List of metric dicts, one per commute split.
+        List of ``CommuteMetrics``, one per commute split.
     """
 
     activity_records = records.parse_record_cached(
@@ -246,23 +295,8 @@ def parse_commute_file(
 
     if conn is not None:
         conn.executemany(
-            "INSERT OR REPLACE INTO commutes"
-            " (filename, segment, date, description, direction,"
-            " distance, elapsed_time_s, moving_time_s)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    activity["Filename"],
-                    cache_db.segment_to_db(split["segment"]),
-                    str(split["date"]),
-                    split["description"],
-                    split["direction"],
-                    cache_db.to_sql(split["distance"]),
-                    cache_db.to_sql(split["elapsed_time_s"]),
-                    cache_db.to_sql(split["moving_time_s"]),
-                )
-                for split in results
-            ],
+            CommuteMetrics.INSERT_SQL,
+            [split.to_db_params() for split in results],
         )
 
     return results
@@ -273,7 +307,7 @@ def process_commute_csv(
     utc_date: pd.Timestamp,
     tz: str,
     config: CommuteConfig,
-) -> dict[str, Any]:
+) -> CommuteMetrics:
     """Derive commute metrics for an activity with no file.
 
     Uses Strava CSV fields directly in place of parsed activity records.
@@ -285,7 +319,7 @@ def process_commute_csv(
         config: Configuration parameters.
 
     Returns:
-        Metric dict for the commute.
+        Computed metrics for the commute.
     """
 
     date = utc_date.tz_localize("UTC").tz_convert(tz).tz_localize(None)
@@ -293,16 +327,15 @@ def process_commute_csv(
         "Morning" if date.hour < config.morning_cutoff_hour else "Afternoon"
     )
 
-    return {
-        "date": date,
-        "description": activity["Activity Name"],
-        "direction": direction,
-        "distance": activity["Distance"] * utils.KM_TO_MI,
-        "elapsed_time_s": float(activity["Elapsed Time"]),
-        "moving_time_s": float(activity["Moving Time"]),
-        "filename": activity["Filename"],
-        "segment": None,
-    }
+    return CommuteMetrics(
+        date=date,
+        description=activity["Activity Name"],
+        direction=direction,
+        distance=activity["Distance"] * utils.KM_TO_MI,
+        elapsed_time_s=float(activity["Elapsed Time"]),
+        moving_time_s=float(activity["Moving Time"]),
+        filename=activity["Filename"],
+    )
 
 
 def load_commute_splits(
@@ -310,8 +343,8 @@ def load_commute_splits(
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None,
     config: CommuteConfig,
-    cache: dict[str, list[dict[str, Any]]] | None,
-) -> dict[str, list[dict[str, Any]]]:
+    cache: dict[str, list[CommuteMetrics]] | None,
+) -> dict[str, list[CommuteMetrics]]:
     """Compute per-commute metrics, using a pre-loaded cache when provided.
 
     Cache misses are computed and written to the DB as each file is parsed.
@@ -324,7 +357,7 @@ def load_commute_splits(
         cache: Commutes cache keyed by filename, or ``None`` to skip caching.
 
     Returns:
-        Dict mapping each filename to its list of commute split dicts.
+        Dict mapping each filename to its list of commute split metrics.
     """
 
     files = file_commutes["Filename"]
@@ -365,7 +398,7 @@ def build_commute_columns(
     home_tz: Callable[[pd.Series], pd.Series | str] | str,
     cache_dir: str | PathLike[str] | None,
     config: CommuteConfig,
-) -> list[dict[str, Any]]:
+) -> list[dict]:
     """Compute all derived per-commute columns with a cache lookup.
 
     Reads the commutes cache, processes misses, and optionally runs route
@@ -403,13 +436,15 @@ def build_commute_columns(
         for utc_date, activity in csv_commutes.iterrows()
     }
 
-    results = []
+    metrics = []
     for utc_date, activity in commutes.iterrows():
         fn = activity["Filename"]
         if pd.isna(fn):
-            results.append(csv_splits[utc_date])
+            metrics.append(csv_splits[utc_date])
         else:
-            results.extend(file_splits[fn])
+            metrics.extend(file_splits[fn])
+
+    results = [asdict(m) for m in metrics]
 
     if config.clustering is not None:
         clusters = routes.cluster_routes_cached(
@@ -469,18 +504,19 @@ def load_commute_activities(
     commutes = csv[csv["Commute"].fillna(False)]
     results = build_commute_columns(commutes, path, home_tz, cache_dir, config)
 
+    columns = [
+        "description",
+        "direction",
+        "distance",
+        "elapsed_time",
+        "moving_time",
+        "filename",
+        "segment",
+    ]
+    if config.clustering is not None:
+        columns += ["cluster_id", "cluster_name"]
+
     if not results:
-        columns = [
-            "description",
-            "direction",
-            "distance",
-            "elapsed_time",
-            "moving_time",
-            "filename",
-            "segment",
-        ]
-        if config.clustering is not None:
-            columns += ["cluster_id", "cluster_name"]
         return pd.DataFrame(columns=columns, index=pd.Index([], name="date"))
 
     df = (
@@ -496,7 +532,7 @@ def load_commute_activities(
             segment=lambda d: d["segment"].astype("Int64"),
         )
         .drop(columns=["elapsed_time_s", "moving_time_s"])
-    )
+    )[columns]
     if config.clustering is not None:
         df["cluster_id"] = df["cluster_id"].astype("Int64")
     return df

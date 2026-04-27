@@ -8,7 +8,7 @@ from collections.abc import Iterable, Iterator
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from os import PathLike
-from typing import Literal
+from typing import ClassVar, Literal
 
 import numpy as np
 import pandas as pd
@@ -68,6 +68,63 @@ class RouteClusterConfig:
     @property
     def name_col(self) -> str:
         return "Activity Name" if self.raw_csv else "description"
+
+
+@dataclass
+class ClusterFingerprint:
+    """Row in the ``cluster_fingerprints`` table.
+
+    Attributes:
+        table_name: DB table whose cluster columns this fingerprint covers.
+        fingerprint: MD5 hex digest of the activity keys and clustering config.
+    """
+
+    table_name: str
+    fingerprint: str
+
+    @classmethod
+    def build(
+        cls,
+        table: str,
+        keys: Iterable["tuple[str, int] | None"],
+        config: "RouteClusterConfig",
+    ) -> "ClusterFingerprint":
+        """Construct a fingerprint from activity keys and clustering config.
+
+        Args:
+            table: DB table name (``"activities"`` or ``"commutes"``).
+            keys: ``cache_key`` results for all activities, including ``None``
+                for fileless entries. Order and duplicates do not matter.
+            config: Clustering configuration.
+
+        Returns:
+            ``ClusterFingerprint`` with the computed MD5 hex digest.
+        """
+        config_dict = {
+            f.name: getattr(config, f.name)
+            for f in dataclasses.fields(config)
+            if f.init  # exclude raw_csv (non-init column-name flag)
+        }
+        file_keys = sorted({k for k in keys if k is not None})
+        payload = json.dumps(
+            {"keys": file_keys, "config": config_dict}, sort_keys=True
+        )
+        return cls(
+            table_name=table,
+            fingerprint=hashlib.md5(payload.encode()).hexdigest(),
+        )
+
+    SELECT_SQL: ClassVar[str] = (
+        "SELECT fingerprint FROM cluster_fingerprints WHERE table_name = ?"
+    )
+    INSERT_SQL: ClassVar[str] = (
+        "INSERT OR REPLACE INTO cluster_fingerprints"
+        " (table_name, fingerprint) VALUES (?, ?)"
+    )
+
+    def to_db_params(self) -> tuple[str, str]:
+        """Return positional params for ``INSERT_SQL``."""
+        return (self.table_name, self.fingerprint)
 
 
 # ---------------------------------------------------------------------------
@@ -524,35 +581,6 @@ def cluster_routes(
     )
 
 
-def cluster_fingerprint(
-    keys: Iterable[tuple[str, int] | None],
-    config: RouteClusterConfig,
-) -> str:
-    """Compute a cache fingerprint for a set of activities and config.
-
-    Args:
-        keys: ``cache_key`` results for all activities, including ``None``
-            for fileless entries. Order and duplicates do not matter.
-        config: Clustering configuration.
-
-    Returns:
-        MD5 hex digest string.
-    """
-
-    config_dict = {
-        f.name: getattr(config, f.name)
-        for f in dataclasses.fields(config)
-        if f.init  # exclude raw_csv (non-init column-name flag)
-    }
-
-    file_keys = sorted({k for k in keys if k is not None})
-    payload = json.dumps(
-        {"keys": file_keys, "config": config_dict}, sort_keys=True
-    )
-
-    return hashlib.md5(payload.encode()).hexdigest()
-
-
 def cluster_routes_cached(
     activities: pd.DataFrame,
     segments: Iterable[int | None] | None,
@@ -594,16 +622,13 @@ def cluster_routes_cached(
     filenames = activities[config.filename_col]
     segs = segments if segments is not None else itertools.repeat(None)
     keys = [cache_db.cache_key(fn, seg) for fn, seg in zip(filenames, segs)]
-    expected_fp = cluster_fingerprint(keys, config)
+    expected_fp = ClusterFingerprint.build(table, keys, config)
 
     with cache_db.open_db(cache_dir) as conn:
-        row = conn.execute(
-            "SELECT fingerprint FROM cluster_fingerprints"
-            f" WHERE table_name='{table}'",
-        ).fetchone()
+        row = conn.execute(ClusterFingerprint.SELECT_SQL, (table,)).fetchone()
         stored_fp = row[0] if row else None
 
-    if stored_fp == expected_fp:
+    if stored_fp == expected_fp.fingerprint:
         fns = list({k[0] for k in keys if k is not None})
         assert fns, "cache hit with no file-based activities"
 
@@ -641,9 +666,8 @@ def cluster_routes_cached(
                 ],
             )
             conn.execute(
-                "INSERT OR REPLACE INTO cluster_fingerprints"
-                " (table_name, fingerprint) VALUES (?, ?)",
-                (table, expected_fp),
+                ClusterFingerprint.INSERT_SQL,
+                expected_fp.to_db_params(),
             )
 
     return result

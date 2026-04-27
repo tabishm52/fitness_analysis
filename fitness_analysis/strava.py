@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from os import PathLike
 from pathlib import Path
-from typing import Any
+from typing import ClassVar
 
 import numpy as np
 import pandas as pd
@@ -44,6 +44,53 @@ class ActivitiesConfig:
             self.clustering.raw_csv = True
 
 
+@dataclass
+class ActivityMetrics:
+    """Per-activity metrics computed from a single activity file.
+
+    Attributes:
+        filename: Activity filename, or NaN for fileless activities.
+        timezone: IANA timezone inferred from GPS data, or ``None`` when absent.
+        has_location: Whether the activity has GPS location data.
+        max_heart_rate: Maximum heart rate in bpm, or ``None``.
+        estimated_ftp: Estimated FTP in watts, or ``None``.
+    """
+
+    filename: str | float
+    timezone: str | None = None
+    has_location: bool = False
+    max_heart_rate: float | None = None
+    estimated_ftp: float | None = None
+
+    INSERT_SQL: ClassVar[str] = (
+        "INSERT OR REPLACE INTO activities"
+        " (filename, segment, timezone, has_location,"
+        " max_heart_rate, estimated_ftp)"
+        " VALUES (?, -1, ?, ?, ?, ?)"
+    )
+    SELECT_SQL: ClassVar[str] = (
+        "SELECT"
+        " filename, timezone, has_location, max_heart_rate, estimated_ftp"
+        " FROM activities"
+    )
+
+    def to_db_params(self) -> tuple:
+        """Return positional params for ``INSERT_SQL``."""
+        return (
+            self.filename,
+            self.timezone,
+            int(self.has_location),
+            cache_db.to_sql(self.max_heart_rate),
+            cache_db.to_sql(self.estimated_ftp),
+        )
+
+    @classmethod
+    def from_db_row(cls, row: tuple) -> "ActivityMetrics":
+        """Construct from ``SELECT_SQL``."""
+        fn, tz, has_loc, max_hr, ftp = row
+        return cls(fn, tz, bool(has_loc), max_hr, ftp)
+
+
 # ---------------------------------------------------------------------------
 # Cache management
 # ---------------------------------------------------------------------------
@@ -51,32 +98,20 @@ class ActivitiesConfig:
 
 def load_activities_cache(
     cache_dir: str | PathLike[str],
-) -> dict[str, dict[str, Any]]:
+) -> dict[str, ActivityMetrics]:
     """Read the activities cache from the database.
 
     Args:
         cache_dir: Cache directory containing the SQLite database.
 
     Returns:
-        Dict mapping each activity filename to its cached metric dict.
+        Dict mapping each activity filename to its cached metrics.
     """
 
     with cache_db.open_db(cache_dir) as conn:
-        rows = conn.execute(
-            "SELECT filename, timezone, has_location,"
-            " max_heart_rate, estimated_ftp FROM activities"
-        ).fetchall()
+        rows = conn.execute(ActivityMetrics.SELECT_SQL).fetchall()
 
-    return {
-        fn: {
-            "filename": fn,
-            "timezone": tz,
-            "has_location": bool(has_loc),
-            "max_heart_rate": max_hr,
-            "estimated_ftp": ftp,
-        }
-        for fn, tz, has_loc, max_hr, ftp in rows
-    }
+    return {row[0]: ActivityMetrics.from_db_row(row) for row in rows}
 
 
 def invalidate_activities_cache(
@@ -121,7 +156,7 @@ def parse_activity_file(
     config: ActivitiesConfig,
     cache_dir: str | PathLike[str] | None = None,
     conn: sqlite3.Connection | None = None,
-) -> dict[str, Any]:
+) -> ActivityMetrics:
     """Parse a single activity file and compute metrics.
 
     Args:
@@ -133,7 +168,7 @@ def parse_activity_file(
             are inserted into the cache as each file is parsed.
 
     Returns:
-        Metrics dict for the activity.
+        Computed metrics for the activity.
     """
 
     activity_records = records.parse_record_cached(
@@ -142,8 +177,6 @@ def parse_activity_file(
 
     timezone = utils.infer_timezone(activity_records)
     has_location = timezone is not None
-    if timezone is None:
-        timezone = np.nan
 
     if "heart_rate" in activity_records.columns:
         max_hr = activity_records["heart_rate"].max()
@@ -162,28 +195,16 @@ def parse_activity_file(
     else:
         estimated_ftp = np.nan
 
-    result = {
-        "filename": filename,
-        "timezone": timezone,
-        "has_location": has_location,
-        "max_heart_rate": max_hr,
-        "estimated_ftp": estimated_ftp,
-    }
+    result = ActivityMetrics(
+        filename=filename,
+        timezone=timezone,
+        has_location=has_location,
+        max_heart_rate=max_hr,
+        estimated_ftp=estimated_ftp,
+    )
 
     if conn is not None:
-        conn.execute(
-            "INSERT OR REPLACE INTO activities"
-            " (filename, segment, timezone, has_location,"
-            " max_heart_rate, estimated_ftp)"
-            " VALUES (?, -1, ?, ?, ?, ?)",
-            (
-                result["filename"],
-                cache_db.to_sql(result["timezone"]),
-                int(result["has_location"]),
-                cache_db.to_sql(result["max_heart_rate"]),
-                cache_db.to_sql(result["estimated_ftp"]),
-            ),
-        )
+        conn.execute(ActivityMetrics.INSERT_SQL, result.to_db_params())
 
     return result
 
@@ -193,7 +214,7 @@ def load_file_metrics(
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None,
     config: ActivitiesConfig,
-    cache: dict[str, dict[str, Any]] | None = None,
+    cache: dict[str, ActivityMetrics] | None = None,
 ) -> pd.DataFrame:
     """Compute per-activity metrics, using a pre-loaded cache when provided.
 
@@ -220,14 +241,8 @@ def load_file_metrics(
             )
         return pd.DataFrame(results, index=files.index)
 
-    no_file_result = {
-        "timezone": np.nan,
-        "has_location": False,
-        "max_heart_rate": np.nan,
-        "estimated_ftp": np.nan,
-    }
     rows = [
-        {"filename": f, **no_file_result} if pd.isna(f) else cache.get(f)
+        ActivityMetrics(filename=f) if pd.isna(f) else cache.get(f)
         for f in files
     ]
     misses = [f for f, r in zip(files, rows) if r is None]
