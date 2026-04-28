@@ -3,7 +3,7 @@
 import dataclasses
 from collections.abc import Callable, Iterable
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import partial
 from os import PathLike
 
@@ -36,7 +36,7 @@ class CommuteConfig:
     stopped_speed: float = 1.0
     min_stop_duration: pd.Timedelta = pd.Timedelta(10, "s")
     morning_cutoff_hour: int = 12
-    clustering: routes.RouteClusterConfig | None = field(
+    clustering: routes.RouteClusterConfig | None = dataclasses.field(
         default_factory=routes.RouteClusterConfig
     )
 
@@ -115,7 +115,6 @@ def load_commutes_cache(
     Returns:
         Dict mapping each activity filename to its list of cached split metrics.
     """
-
     result = {}
     with cache_db.open_db(cache_dir) as db:
         for row in db["commutes"].rows:
@@ -141,7 +140,6 @@ def invalidate_commutes_cache(
             cleared.
         cache_dir: Cache directory passed to ``load_commute_activities``.
     """
-
     if not cache_db.db_path(cache_dir).exists():
         return
 
@@ -207,7 +205,6 @@ def segment_metrics(
     Returns:
         Computed metrics for the segment.
     """
-
     timezone = utils.infer_timezone(group)
     ts = group.index[0]
     date = (ts.tz_convert(timezone) if timezone else ts).tz_localize(None)
@@ -267,7 +264,6 @@ def parse_commute_file(
     Returns:
         List of ``CommuteMetrics``, one per commute split.
     """
-
     activity_records = records.parse_record_cached(
         activity["Filename"], None, path, cache_dir
     )
@@ -325,7 +321,6 @@ def process_commute_csv(
     Returns:
         Computed metrics for the commute.
     """
-
     date = utc_date.tz_localize("UTC").tz_convert(tz).tz_localize(None)
     direction = (
         "Morning" if date.hour < config.morning_cutoff_hour else "Afternoon"
@@ -363,7 +358,6 @@ def load_commute_splits(
     Returns:
         Dict mapping each filename to its list of commute split metrics.
     """
-
     files = file_commutes["Filename"]
 
     if cache is None:
@@ -420,7 +414,6 @@ def build_commute_columns(
     Returns:
         List of result dicts, one per commute split.
     """
-
     cache = load_commutes_cache(cache_dir) if cache_dir is not None else None
 
     file_mask = commutes["Filename"].notna()
@@ -499,7 +492,6 @@ def load_commute_activities(
     Returns:
         Summary metrics from commute activities indexed by local date.
     """
-
     if config is None:
         config = CommuteConfig()
 

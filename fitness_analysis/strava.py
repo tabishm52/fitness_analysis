@@ -3,7 +3,7 @@
 import dataclasses
 from collections.abc import Callable, Iterable
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import partial
 from os import PathLike
 from pathlib import Path
@@ -35,7 +35,7 @@ class ActivitiesConfig:
     ftp_window_s: int = 20 * 60
     ftp_factor: float = 0.95
     weekly_anchor: str = "W-SUN"
-    clustering: routes.RouteClusterConfig | None = field(
+    clustering: routes.RouteClusterConfig | None = dataclasses.field(
         default_factory=routes.RouteClusterConfig
     )
 
@@ -101,7 +101,6 @@ def load_activities_cache(
     Returns:
         Dict mapping each activity filename to its cached metrics.
     """
-
     with cache_db.open_db(cache_dir) as db:
         return {
             row["filename"]: ActivityMetrics.from_db_dict(row)
@@ -123,7 +122,6 @@ def invalidate_activities_cache(
             cleared.
         cache_dir: Cache directory passed to ``load_strava_activities``.
     """
-
     if not cache_db.db_path(cache_dir).exists():
         return
 
@@ -169,7 +167,6 @@ def parse_activity_file(
     Returns:
         Computed metrics for the activity.
     """
-
     activity_records = records.parse_record_cached(
         filename, None, path, cache_dir
     )
@@ -229,7 +226,6 @@ def load_file_metrics(
     Returns:
         Metrics DataFrame aligned to ``files.index``.
     """
-
     if cache is None:
         with ProcessPoolExecutor() as ex:
             results = list(
@@ -285,7 +281,6 @@ def build_activity_columns(
     Returns:
         Computed columns aligned to the index of ``csv``.
     """
-
     cache = load_activities_cache(cache_dir) if cache_dir is not None else None
 
     calcs = load_file_metrics(csv["Filename"], path, cache_dir, config, cache)
@@ -335,7 +330,6 @@ def load_strava_activities_raw(
     Returns:
         Raw activity data indexed by UTC activity date.
     """
-
     csv = pd.read_csv(Path(path) / ACTIVITIES_FNAME).query(
         '`Activity Type` in ["Ride", "Virtual Ride"]'
     )
@@ -379,7 +373,6 @@ def load_strava_activities(
         - ``weekly_sums``: Distance, elevation, and time totals resampled to
           weekly (Sunday) buckets.
     """
-
     if config is None:
         config = ActivitiesConfig()
 

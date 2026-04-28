@@ -28,7 +28,6 @@ def to_sql(v: Any) -> Any:
     Returns:
         sqlite3-safe scalar, or ``None`` if ``v`` is NaN.
     """
-
     if pd.isna(v):
         return None
 
@@ -44,7 +43,6 @@ def segment_from_db(seg: int) -> int | None:
     Returns:
         ``None`` for whole-file activities, otherwise the segment index.
     """
-
     return None if seg == -1 else seg
 
 
@@ -57,7 +55,6 @@ def segment_to_db(seg: int | None) -> int:
     Returns:
         -1 for whole-file activities, otherwise the segment index as an ``int``.
     """
-
     return -1 if seg is None or pd.isna(seg) else int(seg)
 
 
@@ -74,7 +71,6 @@ def cache_key(fn: str | float, seg: int | None) -> tuple[str, int] | None:
     Returns:
         ``(filename, segment)`` tuple, or ``None`` if ``fn`` is NaN.
     """
-
     if pd.isna(fn):
         return None
 
@@ -95,7 +91,6 @@ def db_path(cache_dir: str | PathLike[str]) -> Path:
     Returns:
         Path to the cache database file within ``cache_dir``.
     """
-
     return Path(cache_dir) / DB_FILE
 
 
@@ -115,7 +110,6 @@ def open_db(
     Yields:
         Open ``sqlite_utils.Database``.
     """
-
     db = sqlite_utils.Database(db_path(cache_dir))
     try:
         ensure_tables(db)
@@ -130,7 +124,6 @@ def ensure_tables(db: sqlite_utils.Database) -> None:
     Args:
         db: Open database.
     """
-
     db.conn.executescript("""
         CREATE TABLE IF NOT EXISTS activities (
             filename       TEXT NOT NULL,

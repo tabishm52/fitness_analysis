@@ -50,7 +50,6 @@ def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
     Returns:
         A mapping of merged sheet data keyed by sheet name.
     """
-
     data_parts: dict[str, list[pd.DataFrame]] = {}
     excel_files = sorted(
         f for f in Path(path).iterdir() if f.suffix.lower() in {".xls", ".xlsx"}
@@ -90,7 +89,6 @@ def merge_excel_files_cached(
     Returns:
         A mapping of merged sheet data keyed by sheet name.
     """
-
     excel_files = sorted(
         f for f in Path(path).iterdir() if f.suffix.lower() in {".xls", ".xlsx"}
     )
@@ -132,7 +130,6 @@ def invalidate_mnd_cache(cache_dir: str | PathLike[str]) -> None:
     Args:
         cache_dir: Cache directory passed to ``load_mnd_data``.
     """
-
     cache_path = Path(cache_dir) / MND_CACHE_DIR
     if cache_path.exists():
         shutil.rmtree(cache_path)
@@ -160,7 +157,6 @@ def eer_male(
     Returns:
         Estimated daily energy requirement for each timestamp in ``weight``.
     """
-
     # Calculate time series of age in fractional years
     age = (weight.index - np.datetime64(dob)).days / 365.25
 
@@ -186,7 +182,6 @@ def eer_female(
     Returns:
         Estimated daily energy requirement for each timestamp in ``weight``.
     """
-
     # Calculate time series of age in fractional years
     age = (weight.index - np.datetime64(dob)).astype("timedelta64[D]") / 365.25
 
@@ -218,7 +213,6 @@ def load_mnd_data(
     Returns:
         Tuple containing processed weight and calorie metrics.
     """
-
     if tuning is None:
         tuning = MndTuning()
 

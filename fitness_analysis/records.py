@@ -46,7 +46,6 @@ def parquet_path(
         ``{cache_dir}/activity_records/1234567890.fit.parquet`` or
         ``{cache_dir}/activity_records/1234567890-1.fit.parquet``.
     """
-
     name = Path(filename).name
     base = name[:-3] if name.endswith(".gz") else name
 
@@ -72,7 +71,6 @@ def cache_record(
         segment: 1-based segment index. ``None`` for whole-file activities.
         cache_dir: Cache directory.
     """
-
     path = parquet_path(filename, segment, cache_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -109,7 +107,6 @@ def parse_record_cached(
     Returns:
         Parsed records.
     """
-
     full_path = Path(path) / filename
 
     if segment is not None and cache_dir is None:
@@ -160,7 +157,6 @@ def parse_coords_cached(
         Trimmed ``latitude``/``longitude`` data, or ``None`` if GPS data are
         absent.
     """
-
     rec = parse_record_cached(filename, segment, path, cache_dir)
 
     if "latitude" not in rec.columns:
@@ -191,7 +187,6 @@ def _record_args(
     When ``segments`` is ``None``, every file is treated as a whole-file
     activity (``segment=None``).
     """
-
     segs = segments if segments is not None else itertools.repeat(None)
     for f, seg in zip(files, segs):
         normalized = None if seg is None or pd.isna(seg) else int(seg)
@@ -200,13 +195,11 @@ def _record_args(
 
 def _parse_record_cached_packed(args: tuple) -> pd.DataFrame:
     """Picklable single-argument wrapper around ``parse_record_cached``."""
-
     return parse_record_cached(*args)
 
 
 def _parse_coords_cached_packed(args: tuple) -> pd.DataFrame | None:
     """Picklable single-argument wrapper around ``parse_coords_cached``."""
-
     return parse_coords_cached(*args)
 
 
@@ -235,7 +228,6 @@ def warm_records_cache(
         path: Directory containing the activity files.
         cache_dir: Cache directory containing the parquet subdirectory.
     """
-
     cold_args = [
         args
         for args in _record_args(files, segments, path, cache_dir)
@@ -272,7 +264,6 @@ def invalidate_records_cache(
         cache_dir: Cache directory passed to ``load_activity_records`` or
             ``load_strava_activities``.
     """
-
     parquet_dir = Path(cache_dir) / RECORDS_CACHE_DIR
     if not parquet_dir.exists():
         return
@@ -313,7 +304,6 @@ def load_activity_records(
     Returns:
         Parsed records, one per file, in the same order as ``files``.
     """
-
     args = list(_record_args(files, segments, path, cache_dir))
 
     if cache_dir is None:
@@ -348,7 +338,6 @@ def load_activity_coords(
         Trimmed ``latitude``/``longitude`` data, one per file, in the same
         order as ``files``. ``None`` for files with no GPS data.
     """
-
     args = list(_record_args(files, segments, path, cache_dir))
 
     if cache_dir is None:

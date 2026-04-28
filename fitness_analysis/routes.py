@@ -6,7 +6,7 @@ import itertools
 import json
 from collections.abc import Iterable, Iterator
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from os import PathLike
 from typing import Literal
 
@@ -59,7 +59,7 @@ class RouteClusterConfig:
 
     # If True, cluster_routes() uses Strava CSV column names. If False,
     # cluster_routes() uses column names from load_strava_activities().
-    raw_csv: bool = field(default=False, init=False, repr=False)
+    raw_csv: bool = dataclasses.field(default=False, init=False, repr=False)
 
     @property
     def filename_col(self) -> str:
@@ -118,7 +118,6 @@ def compute_cluster_fingerprint(
     Returns:
         MD5 hex digest string.
     """
-
     config_dict = {
         f.name: getattr(config, f.name)
         for f in dataclasses.fields(config)
@@ -161,7 +160,6 @@ def resample_route(
         ``(route_xy, route_length_m)`` where ``route_xy`` is shape (n, 2),
         or None if the route has zero length after NaN filtering.
     """
-
     mask = np.isfinite(lat)
     lat, lon = lat[mask], lon[mask]
     easting, northing, _, _ = utm.from_latlon(
@@ -214,7 +212,6 @@ def extract_route_features(
         - ``valid_routes``: corresponding trimmed lat/lon DataFrames, one per
           valid route (``latitude`` and ``longitude`` columns, NaN-trimmed).
     """
-
     coords_list = records.load_activity_coords(
         activities[config.filename_col], segments, path, cache_dir
     )
@@ -254,7 +251,6 @@ def frechet_pair(
         Fréchet distance normalised by the mean route length of the pair,
         or ``inf`` if the length ratio pre-filter rejects the pair.
     """
-
     if len_a > len_b * length_ratio_max or len_b > len_a * length_ratio_max:
         return np.inf
 
@@ -264,7 +260,6 @@ def frechet_pair(
 
 def _frechet_pair_packed(args: tuple) -> float:
     """Picklable single-argument wrapper around ``frechet_pair``."""
-
     return frechet_pair(*args)
 
 
@@ -276,7 +271,6 @@ def route_pairs(
     Suitable for unpacking into ``frechet_pair`` or passing to
     ``_frechet_pair_packed``.
     """
-
     n = len(route_list)
     for i in range(n):
         for j in range(i + 1, n):
@@ -291,7 +285,6 @@ def route_pairs(
 
 def symmetric_matrix(n: int, upper_tri: list[float]) -> np.ndarray:
     """Build a symmetric (N, N) matrix from upper-triangle values."""
-
     rows, cols = np.triu_indices(n, k=1)
     matrix = np.zeros((n, n))
     matrix[rows, cols] = upper_tri
@@ -317,7 +310,6 @@ def cluster_partition(
     Returns:
         Label array of length N. -1 indicates noise (unmatched).
     """
-
     # sklearn rejects non-finite values; replace inf (pre-filtered pairs) with
     # a sentinel larger than any eps.
     safe = np.nan_to_num(distance_matrix, copy=True, posinf=1e9)
@@ -346,7 +338,6 @@ def partition_by_location(
         List of route-index groups; only groups with at least
         ``config.min_samples`` members are included.
     """
-
     start_lats = np.radians([df["latitude"].iloc[0] for df in valid_routes])
     start_lons = np.radians([df["longitude"].iloc[0] for df in valid_routes])
     end_lats = np.radians([df["latitude"].iloc[-1] for df in valid_routes])
@@ -391,7 +382,6 @@ def resample_partition(
           non-zero length after projection (preserves order).
         - ``resampled``: corresponding ``(route_xy, route_length_m)`` tuples.
     """
-
     start_lats = [raw_routes[i]["latitude"].iloc[0] for i in members]
     start_lons = [raw_routes[i]["longitude"].iloc[0] for i in members]
     centroid_lat = float(np.median(start_lats))
@@ -435,7 +425,6 @@ def partition_and_cluster(
         Activity index values grouped into clusters, ordered by cluster size
         descending (largest first).
     """
-
     raw_partitions = partition_by_location(valid_routes, config)
 
     # Drop partitions that fall below min_samples after resampling (routes
@@ -526,7 +515,6 @@ def compute_clusters(
     Returns:
         List of ``ClusterResult`` aligned to ``activities``, one per row.
     """
-
     has_file = activities[config.filename_col].notna()
     valid_idx, valid_routes = extract_route_features(
         activities[has_file], segments, path, cache_dir, config
@@ -607,7 +595,6 @@ def cluster_routes(
         - ``cluster_name``: Mode of activity names within the cluster,
           ``None`` for unmatched activities.
     """
-
     if config is None:
         config = RouteClusterConfig()
 
@@ -651,7 +638,6 @@ def cluster_routes_cached(
         DataFrame with ``cluster_id`` and ``cluster_name`` columns, indexed
         like ``activities``.
     """
-
     if cache_dir is None:
         return cluster_routes(activities, segments, path, cache_dir, config)
 

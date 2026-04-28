@@ -41,7 +41,6 @@ def ewm_min_periods_from_halflife(
     Returns:
         Integer ``min_periods`` aligned to the specified half-life.
     """
-
     if not 0 < coverage < 1:
         raise ValueError("coverage must be in (0, 1)")
 
@@ -85,7 +84,6 @@ def rolling_linear_rate(
     Returns:
         Rolling slope aligned to the input index.
     """
-
     # Infer grid step from median index spacing to support any regular grid
     step_us = np.median(
         np.diff(
@@ -124,7 +122,6 @@ def infer_timezone(records: pd.DataFrame) -> str | None:
         Timezone name, or None if no valid latitude/longitude is available
         or no timezone match is found.
     """
-
     if "latitude" not in records.columns or "longitude" not in records.columns:
         return None
 
@@ -158,7 +155,6 @@ def identify_inactive_periods(
     Returns:
         Time-indexed boolean mask.
     """
-
     # Calculate the derivative of series values, in units per second.
     # (this will be noisy but works well enough for our purposes)
     velocity = series.resample("s").interpolate().diff()
