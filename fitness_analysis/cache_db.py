@@ -21,12 +21,6 @@ def to_sql(v: Any) -> Any:
     """Coerce a value to a sqlite3-safe scalar.
 
     Converts NaN to None and numpy scalars to their Python equivalents.
-
-    Args:
-        v: Value to coerce.
-
-    Returns:
-        sqlite3-safe scalar, or ``None`` if ``v`` is NaN.
     """
     if pd.isna(v):
         return None
@@ -35,26 +29,12 @@ def to_sql(v: Any) -> Any:
 
 
 def segment_from_db(seg: int) -> int | None:
-    """Translate a segment value from its SQLite representation to Python.
-
-    Args:
-        seg: Segment integer read from the database.
-
-    Returns:
-        ``None`` for whole-file activities, otherwise the segment index.
-    """
+    """Translate a segment value from its SQLite representation to Python."""
     return None if seg == -1 else seg
 
 
 def segment_to_db(seg: int | None) -> int:
-    """Translate a segment value from Python to its SQLite representation.
-
-    Args:
-        seg: Segment index, or ``None`` / NaN for single-segment activities.
-
-    Returns:
-        -1 for whole-file activities, otherwise the segment index as an ``int``.
-    """
+    """Translate a segment value from Python to its SQLite representation."""
     return -1 if seg is None or pd.isna(seg) else int(seg)
 
 
@@ -83,14 +63,7 @@ def cache_key(fn: str | float, seg: int | None) -> tuple[str, int] | None:
 
 
 def db_path(cache_dir: str | PathLike[str]) -> Path:
-    """Return the path to the cache database file.
-
-    Args:
-        cache_dir: Directory containing the cache database.
-
-    Returns:
-        Path to the cache database file within ``cache_dir``.
-    """
+    """Return the path to the cache database file."""
     return Path(cache_dir) / DB_FILE
 
 
@@ -103,12 +76,6 @@ def open_db(
     The connection is closed on exit even if an exception is raised. Use
     ``with db.conn:`` around raw ``db.conn.execute()`` calls that must commit
     atomically; sqlite-utils methods manage their own transactions internally.
-
-    Args:
-        cache_dir: Directory containing the cache database.
-
-    Yields:
-        Open ``sqlite_utils.Database``.
     """
     db = sqlite_utils.Database(db_path(cache_dir))
     try:
@@ -119,11 +86,7 @@ def open_db(
 
 
 def ensure_tables(db: sqlite_utils.Database) -> None:
-    """Create cache tables if they do not already exist.
-
-    Args:
-        db: Open database.
-    """
+    """Create cache tables if they do not already exist."""
     db.conn.executescript("""
         CREATE TABLE IF NOT EXISTS activities (
             filename       TEXT NOT NULL,
