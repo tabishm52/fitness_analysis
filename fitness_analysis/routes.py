@@ -8,7 +8,7 @@ from collections.abc import Iterable, Iterator
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from os import PathLike
-from typing import ClassVar, Literal
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -85,96 +85,52 @@ class ClusterResult:
     cluster_name: str | None = None
 
     @classmethod
-    def select_sql(cls, table: str, filenames: list) -> str:
-        """SELECT SQL for cache-hit reads against ``table``."""
-        marks = ",".join("?" * len(filenames))
-        return (
-            f"SELECT filename, segment, cluster_id, cluster_name"
-            f" FROM {table} WHERE filename IN ({marks})"
-        )
-
-    @classmethod
     def update_sql(cls, table: str) -> str:
         """UPDATE SQL for writing cluster assignments back to ``table``."""
-        return (
-            f"UPDATE {table} SET cluster_id=?, cluster_name=?"
-            " WHERE filename=? AND segment=?"
-        )
+        sets = ", ".join(f"{f.name}=?" for f in dataclasses.fields(cls))
+        return f"UPDATE {table} SET {sets} WHERE filename=? AND segment=?"
 
     def to_update_params(self, filename: str, segment: int) -> tuple:
-        """Return positional params for ``update_sql`` (SET then WHERE)."""
-        return (
-            cache_db.to_sql(self.cluster_id),
-            cache_db.to_sql(self.cluster_name),
-            filename,
-            segment,
-        )
+        """Positional params for ``update_sql`` (SET values then WHERE key)."""
+        return (*dataclasses.asdict(self).values(), filename, segment)
 
     @classmethod
-    def from_db_row(cls, row: tuple) -> "ClusterResult":
-        """Construct from a ``select_sql`` row."""
-        *_, cid, cname = row
-        return cls(cluster_id=cid, cluster_name=cname)
+    def from_db_dict(cls, row: dict) -> "ClusterResult":
+        """Construct from a ``db[table].rows_where()`` row dict."""
+        return cls(**{f.name: row[f.name] for f in dataclasses.fields(cls)})
 
 
-@dataclass
-class ClusterFingerprint:
-    """Row in the ``cluster_fingerprints`` table.
+def compute_cluster_fingerprint(
+    keys: Iterable["tuple[str, int] | None"],
+    config: "RouteClusterConfig",
+) -> str:
+    """Compute an MD5 fingerprint of the activity keys and clustering config.
 
-    Attributes:
-        table_name: DB table whose cluster columns this fingerprint covers.
-        fingerprint: MD5 hex digest of the activity keys and clustering config.
+    Used to detect whether the cached cluster assignments are still valid.
+    Any change to the activity set or config parameters produces a different
+    fingerprint, triggering a full recompute.
+
+    Args:
+        keys: ``cache_key`` results for all activities, including ``None``
+            for fileless entries. Order and duplicates do not matter.
+        config: Clustering configuration.
+
+    Returns:
+        MD5 hex digest string.
     """
 
-    table_name: str
-    fingerprint: str
+    config_dict = {
+        f.name: getattr(config, f.name)
+        for f in dataclasses.fields(config)
+        if f.init  # exclude raw_csv (non-init column-name flag)
+    }
 
-    @classmethod
-    def build(
-        cls,
-        table: str,
-        keys: Iterable["tuple[str, int] | None"],
-        config: "RouteClusterConfig",
-    ) -> "ClusterFingerprint":
-        """Construct a fingerprint from activity keys and clustering config.
-
-        Args:
-            table: DB table name (``"activities"`` or ``"commutes"``).
-            keys: ``cache_key`` results for all activities, including ``None``
-                for fileless entries. Order and duplicates do not matter.
-            config: Clustering configuration.
-
-        Returns:
-            ``ClusterFingerprint`` with the computed MD5 hex digest.
-        """
-        config_dict = {
-            f.name: getattr(config, f.name)
-            for f in dataclasses.fields(config)
-            if f.init  # exclude raw_csv (non-init column-name flag)
-        }
-        file_keys = sorted({k for k in keys if k is not None})
-        payload = json.dumps(
-            {"keys": file_keys, "config": config_dict}, sort_keys=True
-        )
-        return cls(
-            table_name=table,
-            fingerprint=hashlib.md5(payload.encode()).hexdigest(),
-        )
-
-    SELECT_SQL: ClassVar[str] = (
-        "SELECT fingerprint FROM cluster_fingerprints WHERE table_name = ?"
-    )
-    INSERT_SQL: ClassVar[str] = (
-        "INSERT OR REPLACE INTO cluster_fingerprints"
-        " (table_name, fingerprint) VALUES (?, ?)"
-    )
-    DELETE_SQL: ClassVar[str] = (
-        "DELETE FROM cluster_fingerprints WHERE table_name = ?"
+    file_keys = sorted({k for k in keys if k is not None})
+    payload = json.dumps(
+        {"keys": file_keys, "config": config_dict}, sort_keys=True
     )
 
-    def to_db_params(self) -> tuple[str, str]:
-        """Return positional params for ``INSERT_SQL``."""
-        return (self.table_name, self.fingerprint)
+    return hashlib.md5(payload.encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -702,34 +658,37 @@ def cluster_routes_cached(
     filenames = activities[config.filename_col]
     segs = segments if segments is not None else itertools.repeat(None)
     keys = [cache_db.cache_key(fn, seg) for fn, seg in zip(filenames, segs)]
-    expected_fp = ClusterFingerprint.build(table, keys, config)
+    expected_fp = compute_cluster_fingerprint(keys, config)
 
-    with cache_db.open_db(cache_dir) as conn:
-        row = conn.execute(ClusterFingerprint.SELECT_SQL, (table,)).fetchone()
-        stored_fp = row[0] if row else None
-
-    if stored_fp == expected_fp.fingerprint:
-        fns = list({k[0] for k in keys if k is not None})
-        assert fns, "cache hit with no file-based activities"
-
-        with cache_db.open_db(cache_dir) as conn:
-            rows = conn.execute(
-                ClusterResult.select_sql(table, fns), fns
-            ).fetchall()
-        lookup = {
-            (row[0], row[1]): ClusterResult.from_db_row(row) for row in rows
-        }
-        results = [lookup.get(k, ClusterResult()) for k in keys]
-
-        return pd.DataFrame(results, index=activities.index).astype(
-            {"cluster_id": "Int64"}
+    with cache_db.open_db(cache_dir) as db:
+        fp_row = next(
+            db["cluster_fingerprints"].rows_where("table_name = ?", [table]),
+            None,
         )
+        stored_fp = fp_row["fingerprint"] if fp_row else None
+
+        if stored_fp == expected_fp:
+            fns = list({k[0] for k in keys if k is not None})
+            assert fns, "cache hit with no file-based activities"
+
+            marks = ",".join("?" * len(fns))
+            rows = list(db[table].rows_where(f"filename IN ({marks})", fns))
+            lookup = {
+                (r["filename"], r["segment"]): ClusterResult.from_db_dict(r)
+                for r in rows
+            }
+            results = [lookup.get(k, ClusterResult()) for k in keys]
+
+            return pd.DataFrame(results, index=activities.index).astype(
+                {"cluster_id": "Int64"}
+            )
 
     results = compute_clusters(activities, segments, path, cache_dir, config)
 
-    with cache_db.open_db(cache_dir) as conn:
-        with conn:
-            conn.executemany(
+    # Raw SQL so the batch UPDATE and fingerprint INSERT commit atomically
+    with cache_db.open_db(cache_dir) as db:
+        with db.conn:
+            db.conn.executemany(
                 ClusterResult.update_sql(table),
                 [
                     cr.to_update_params(k[0], k[1])
@@ -737,9 +696,10 @@ def cluster_routes_cached(
                     if k is not None
                 ],
             )
-            conn.execute(
-                ClusterFingerprint.INSERT_SQL,
-                expected_fp.to_db_params(),
+            db.conn.execute(
+                "INSERT OR REPLACE INTO cluster_fingerprints"
+                " (table_name, fingerprint) VALUES (?, ?)",
+                (table, expected_fp),
             )
 
     return pd.DataFrame(results, index=activities.index).astype(

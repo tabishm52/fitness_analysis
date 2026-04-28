@@ -1,6 +1,5 @@
 """SQLite cache database shared by the activities and commutes caches."""
 
-import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
 from os import PathLike
@@ -8,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import sqlite_utils
 
 DB_FILE = "fitness_cache.db"
 
@@ -102,36 +102,36 @@ def db_path(cache_dir: str | PathLike[str]) -> Path:
 @contextmanager
 def open_db(
     cache_dir: str | PathLike[str],
-) -> Generator[sqlite3.Connection]:
-    """Open (or create) the cache DB, ensure tables exist, and yield connection.
+) -> Generator[sqlite_utils.Database]:
+    """Open (or create) the cache DB, ensure tables exist, and yield it.
 
-    Uses ``autocommit=False``. Callers should wrap write operations in a
-    ``with conn:`` block to commit them as a transaction. The connection is
-    closed on exit even if an exception is raised.
+    The connection is closed on exit even if an exception is raised. Use
+    ``with db.conn:`` around raw ``db.conn.execute()`` calls that must commit
+    atomically; sqlite-utils methods manage their own transactions internally.
 
     Args:
         cache_dir: Directory containing the cache database.
 
     Yields:
-        Open ``sqlite3.Connection``.
+        Open ``sqlite_utils.Database``.
     """
 
-    conn = sqlite3.connect(db_path(cache_dir), autocommit=False)
+    db = sqlite_utils.Database(db_path(cache_dir))
     try:
-        ensure_tables(conn)
-        yield conn
+        ensure_tables(db)
+        yield db
     finally:
-        conn.close()
+        db.close()
 
 
-def ensure_tables(conn: sqlite3.Connection) -> None:
+def ensure_tables(db: sqlite_utils.Database) -> None:
     """Create cache tables if they do not already exist.
 
     Args:
-        conn: Open database connection.
+        db: Open database.
     """
 
-    conn.executescript("""
+    db.conn.executescript("""
         CREATE TABLE IF NOT EXISTS activities (
             filename       TEXT NOT NULL,
             segment        INTEGER NOT NULL,

@@ -1,15 +1,15 @@
 """Functions for processing Strava bicycling commutes."""
 
-import sqlite3
+import dataclasses
 from collections.abc import Callable, Iterable
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from functools import partial
 from os import PathLike
-from typing import ClassVar
 
 import numpy as np
 import pandas as pd
+import sqlite_utils
 
 from . import cache_db, records, routes, strava, utils
 
@@ -65,42 +65,37 @@ class CommuteMetrics:
     filename: str | float
     segment: int | None = None
 
-    SQL_COLS: ClassVar[str] = (
-        "filename, segment, date, description, direction,"
-        " distance, elapsed_time_s, moving_time_s"
-    )
-    INSERT_SQL: ClassVar[str] = (
-        f"INSERT OR REPLACE INTO commutes ({SQL_COLS})"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    )
-    SELECT_SQL: ClassVar[str] = f"SELECT {SQL_COLS} FROM commutes"
+    def __post_init__(self) -> None:
+        """Coerce numpy scalars to Python-native types."""
+        self.distance = cache_db.to_sql(self.distance)
+        self.elapsed_time_s = cache_db.to_sql(self.elapsed_time_s)
+        self.moving_time_s = cache_db.to_sql(self.moving_time_s)
 
-    def to_db_params(self) -> tuple:
-        """Return positional params for ``INSERT_SQL``."""
-        return (
-            self.filename,
-            cache_db.segment_to_db(self.segment),
-            str(self.date),
-            self.description,
-            self.direction,
-            cache_db.to_sql(self.distance),
-            cache_db.to_sql(self.elapsed_time_s),
-            cache_db.to_sql(self.moving_time_s),
-        )
+    def to_db_dict(self) -> dict:
+        """Return a dict suitable for ``db["commutes"].upsert()``."""
+        return {
+            "date": str(self.date),
+            "description": self.description,
+            "direction": self.direction,
+            "distance": self.distance,
+            "elapsed_time_s": self.elapsed_time_s,
+            "moving_time_s": self.moving_time_s,
+            "filename": self.filename,
+            "segment": cache_db.segment_to_db(self.segment),
+        }
 
     @classmethod
-    def from_db_row(cls, row: tuple) -> "CommuteMetrics":
-        """Construct from ``SELECT_SQL``."""
-        fn, seg, date, desc, direction, dist, elapsed_s, moving_s = row
+    def from_db_dict(cls, row: dict) -> "CommuteMetrics":
+        """Construct from a ``db["commutes"].rows`` row dict."""
         return cls(
-            filename=fn,
-            segment=cache_db.segment_from_db(seg),
-            date=pd.Timestamp(date),
-            description=desc,
-            direction=direction,
-            distance=dist,
-            elapsed_time_s=elapsed_s,
-            moving_time_s=moving_s,
+            date=pd.Timestamp(row["date"]),
+            description=row["description"],
+            direction=row["direction"],
+            distance=row["distance"],
+            elapsed_time_s=row["elapsed_time_s"],
+            moving_time_s=row["moving_time_s"],
+            filename=row["filename"],
+            segment=cache_db.segment_from_db(row["segment"]),
         )
 
 
@@ -121,13 +116,12 @@ def load_commutes_cache(
         Dict mapping each activity filename to its list of cached split metrics.
     """
 
-    with cache_db.open_db(cache_dir) as conn:
-        rows = conn.execute(CommuteMetrics.SELECT_SQL).fetchall()
-
     result = {}
-    for row in rows:
-        m = CommuteMetrics.from_db_row(row)
-        result.setdefault(m.filename, []).append(m)
+    with cache_db.open_db(cache_dir) as db:
+        for row in db["commutes"].rows:
+            m = CommuteMetrics.from_db_dict(row)
+            result.setdefault(m.filename, []).append(m)
+
     return result
 
 
@@ -151,33 +145,43 @@ def invalidate_commutes_cache(
     if not cache_db.db_path(cache_dir).exists():
         return
 
-    with cache_db.open_db(cache_dir) as conn:
+    with cache_db.open_db(cache_dir) as db:
         if files is None:
-            rows = conn.execute(
-                "SELECT filename, segment FROM commutes WHERE segment != -1"
-            ).fetchall()
+            rows = list(
+                db["commutes"].rows_where(
+                    "segment != -1", select="filename, segment"
+                )
+            )
         else:
             files_list = list(files)
             marks = ",".join("?" * len(files_list))
-            rows = conn.execute(
-                "SELECT filename, segment FROM commutes"
-                f" WHERE filename IN ({marks}) AND segment != -1",
-                files_list,
-            ).fetchall()
+            rows = list(
+                db["commutes"].rows_where(
+                    f"filename IN ({marks}) AND segment != -1",
+                    files_list,
+                    select="filename, segment",
+                )
+            )
 
         if rows:
-            fns, segs = zip(*rows)
-            records.invalidate_records_cache(fns, segs, cache_dir)
+            records.invalidate_records_cache(
+                (r["filename"] for r in rows),
+                (r["segment"] for r in rows),
+                cache_dir,
+            )
 
-        with conn:
+        # Single transaction: row delete and fingerprint delete are atomic;
+        # delete_where() uses db.execute() directly and participates correctly.
+        with db.conn:
             if files is None:
-                conn.execute("DELETE FROM commutes")
+                db["commutes"].delete_where()
             else:
-                conn.execute(
-                    f"DELETE FROM commutes WHERE filename IN ({marks})",
-                    files_list,
+                db["commutes"].delete_where(
+                    f"filename IN ({marks})", files_list
                 )
-            conn.execute(routes.ClusterFingerprint.DELETE_SQL, ("commutes",))
+            db["cluster_fingerprints"].delete_where(
+                "table_name = ?", ["commutes"]
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +246,7 @@ def parse_commute_file(
     path: str | PathLike[str],
     config: CommuteConfig,
     cache_dir: str | PathLike[str] | None = None,
-    conn: sqlite3.Connection | None = None,
+    db: sqlite_utils.Database | None = None,
 ) -> list[CommuteMetrics]:
     """Calculate summary metrics for one commute activity.
 
@@ -250,16 +254,15 @@ def parse_commute_file(
     greater than ``config.delta``, and returns metrics for each split.
 
     When ``cache_dir`` is set and the file produces multiple splits, each
-    split's records are written to the parquet cache. When ``conn`` is
-    provided, the computed splits are inserted into the cache as each file is
-    parsed.
+    split's records are written to the parquet cache. When ``db`` is provided,
+    the computed splits are inserted into the cache as each file is parsed.
 
     Args:
         activity: Activity row from the Strava CSV.
         path: Strava export directory.
         config: Configuration parameters.
         cache_dir: Optional cache directory for parsed activity records.
-        conn: Optional open DB connection.
+        db: Optional open database.
 
     Returns:
         List of ``CommuteMetrics``, one per commute split.
@@ -294,10 +297,10 @@ def parse_commute_file(
             )
         results.append(segment_metrics(activity, group, seg_idx, config))
 
-    if conn is not None:
-        conn.executemany(
-            CommuteMetrics.INSERT_SQL,
-            [split.to_db_params() for split in results],
+    if db is not None:
+        db["commutes"].upsert_all(
+            [split.to_db_dict() for split in results],
+            pk=("filename", "segment"),
         )
 
     return results
@@ -383,12 +386,11 @@ def load_commute_splits(
 
     miss_rows = file_commutes[file_commutes["Filename"].isin(misses)]
 
-    with cache_db.open_db(cache_dir) as conn:
-        with conn:
-            for _, activity in miss_rows.iterrows():
-                splits[activity["Filename"]] = parse_commute_file(
-                    activity, path, config, cache_dir, conn
-                )
+    with cache_db.open_db(cache_dir) as db:
+        for _, activity in miss_rows.iterrows():
+            splits[activity["Filename"]] = parse_commute_file(
+                activity, path, config, cache_dir, db
+            )
 
     return splits
 
@@ -445,7 +447,7 @@ def build_commute_columns(
         else:
             metrics.extend(file_splits[fn])
 
-    results = [asdict(m) for m in metrics]
+    results = [dataclasses.asdict(m) for m in metrics]
 
     if config.clustering is not None:
         clusters = routes.cluster_routes_cached(

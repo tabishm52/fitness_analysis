@@ -17,6 +17,7 @@ dependencies = [
     "utm",
     "similaritymeasures",
     "activity-parser",
+    "sqlite-utils",
 ]
 
 [tool.uv.sources]

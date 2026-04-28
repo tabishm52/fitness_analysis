@@ -1,16 +1,16 @@
 """Functions for processing Strava bicycling activities."""
 
-import sqlite3
+import dataclasses
 from collections.abc import Callable, Iterable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from functools import partial
 from os import PathLike
 from pathlib import Path
-from typing import ClassVar
 
 import numpy as np
 import pandas as pd
+import sqlite_utils
 
 from . import cache_db, records, routes, utils
 
@@ -62,33 +62,27 @@ class ActivityMetrics:
     max_heart_rate: float | None = None
     estimated_ftp: float | None = None
 
-    INSERT_SQL: ClassVar[str] = (
-        "INSERT OR REPLACE INTO activities"
-        " (filename, segment, timezone, has_location,"
-        " max_heart_rate, estimated_ftp)"
-        " VALUES (?, -1, ?, ?, ?, ?)"
-    )
-    SELECT_SQL: ClassVar[str] = (
-        "SELECT"
-        " filename, timezone, has_location, max_heart_rate, estimated_ftp"
-        " FROM activities"
-    )
+    def __post_init__(self) -> None:
+        """Coerce numpy scalars to Python types; cast has_location to bool."""
+        self.has_location = bool(self.has_location)
+        self.max_heart_rate = cache_db.to_sql(self.max_heart_rate)
+        self.estimated_ftp = cache_db.to_sql(self.estimated_ftp)
 
-    def to_db_params(self) -> tuple:
-        """Return positional params for ``INSERT_SQL``."""
-        return (
-            self.filename,
-            self.timezone,
-            int(self.has_location),
-            cache_db.to_sql(self.max_heart_rate),
-            cache_db.to_sql(self.estimated_ftp),
-        )
+    def to_db_dict(self) -> dict:
+        """Return a dict suitable for ``db["activities"].upsert()``."""
+        return {
+            "filename": self.filename,
+            "segment": -1,
+            "timezone": self.timezone,
+            "has_location": int(self.has_location),
+            "max_heart_rate": self.max_heart_rate,
+            "estimated_ftp": self.estimated_ftp,
+        }
 
     @classmethod
-    def from_db_row(cls, row: tuple) -> "ActivityMetrics":
-        """Construct from ``SELECT_SQL``."""
-        fn, tz, has_loc, max_hr, ftp = row
-        return cls(fn, tz, bool(has_loc), max_hr, ftp)
+    def from_db_dict(cls, row: dict) -> "ActivityMetrics":
+        """Construct from a ``db["activities"].rows_where()`` row dict."""
+        return cls(**{f.name: row[f.name] for f in dataclasses.fields(cls)})
 
 
 # ---------------------------------------------------------------------------
@@ -108,10 +102,11 @@ def load_activities_cache(
         Dict mapping each activity filename to its cached metrics.
     """
 
-    with cache_db.open_db(cache_dir) as conn:
-        rows = conn.execute(ActivityMetrics.SELECT_SQL).fetchall()
-
-    return {row[0]: ActivityMetrics.from_db_row(row) for row in rows}
+    with cache_db.open_db(cache_dir) as db:
+        return {
+            row["filename"]: ActivityMetrics.from_db_dict(row)
+            for row in db["activities"].rows
+        }
 
 
 def invalidate_activities_cache(
@@ -132,18 +127,21 @@ def invalidate_activities_cache(
     if not cache_db.db_path(cache_dir).exists():
         return
 
-    with cache_db.open_db(cache_dir) as conn:
-        with conn:
+    # Single transaction so the row delete and fingerprint delete are atomic;
+    # delete_where() uses db.execute() directly and participates correctly.
+    with cache_db.open_db(cache_dir) as db:
+        with db.conn:
             if files is None:
-                conn.execute("DELETE FROM activities")
+                db["activities"].delete_where()
             else:
                 files_list = list(files)
                 marks = ",".join("?" * len(files_list))
-                conn.execute(
-                    f"DELETE FROM activities WHERE filename IN ({marks})",
-                    files_list,
+                db["activities"].delete_where(
+                    f"filename IN ({marks})", files_list
                 )
-            conn.execute(routes.ClusterFingerprint.DELETE_SQL, ("activities",))
+            db["cluster_fingerprints"].delete_where(
+                "table_name = ?", ["activities"]
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +154,7 @@ def parse_activity_file(
     path: str | PathLike[str],
     config: ActivitiesConfig,
     cache_dir: str | PathLike[str] | None = None,
-    conn: sqlite3.Connection | None = None,
+    db: sqlite_utils.Database | None = None,
 ) -> ActivityMetrics:
     """Parse a single activity file and compute metrics.
 
@@ -165,8 +163,8 @@ def parse_activity_file(
         path: Strava export directory.
         config: Activities configuration.
         cache_dir: Optional directory for the records parquet cache.
-        conn: Optional open DB connection. When provided, the computed metrics
-            are inserted into the cache as each file is parsed.
+        db: Optional open database. When provided, the computed metrics are
+            inserted into the cache as each file is parsed.
 
     Returns:
         Computed metrics for the activity.
@@ -204,8 +202,8 @@ def parse_activity_file(
         estimated_ftp=estimated_ftp,
     )
 
-    if conn is not None:
-        conn.execute(ActivityMetrics.INSERT_SQL, result.to_db_params())
+    if db is not None:
+        db["activities"].upsert(result.to_db_dict(), pk=("filename", "segment"))
 
     return result
 
@@ -251,12 +249,11 @@ def load_file_metrics(
     if misses:
         records.warm_records_cache(misses, None, path, cache_dir)
 
-        with cache_db.open_db(cache_dir) as conn:
-            with conn:
-                miss_map = {
-                    f: parse_activity_file(f, path, config, cache_dir, conn)
-                    for f in misses
-                }
+        with cache_db.open_db(cache_dir) as db:
+            miss_map = {
+                f: parse_activity_file(f, path, config, cache_dir, db)
+                for f in misses
+            }
 
         rows = [
             r if r is not None else miss_map[f] for f, r in zip(files, rows)
