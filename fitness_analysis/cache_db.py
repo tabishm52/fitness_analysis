@@ -97,6 +97,10 @@ def ensure_tables(db: sqlite_utils.Database) -> None:
             estimated_ftp  REAL,
             cluster_id     REAL,
             cluster_name   TEXT,
+            start_lat      REAL,
+            start_lon      REAL,
+            end_lat        REAL,
+            end_lon        REAL,
             PRIMARY KEY (filename, segment)
         );
         CREATE TABLE IF NOT EXISTS commutes (
@@ -110,6 +114,10 @@ def ensure_tables(db: sqlite_utils.Database) -> None:
             moving_time_s  REAL,
             cluster_id     REAL,
             cluster_name   TEXT,
+            start_lat      REAL,
+            start_lon      REAL,
+            end_lat        REAL,
+            end_lon        REAL,
             PRIMARY KEY (filename, segment)
         );
         CREATE TABLE IF NOT EXISTS cluster_fingerprints (

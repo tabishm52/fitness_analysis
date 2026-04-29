@@ -79,10 +79,22 @@ class ClusterResult:
             for unmatched activities.
         cluster_name: Modal activity name within the cluster, or ``None`` for
             unmatched activities.
+        start_lat: Representative start latitude. For clustered GPS activities
+            this is the cluster centroid (median); for GPS activities below
+            ``min_samples`` it is the raw route start. ``None`` for activities
+            without GPS data.
+        start_lon: Representative start longitude (same semantics as
+            ``start_lat``).
+        end_lat: Representative end latitude (same semantics as ``start_lat``).
+        end_lon: Representative end longitude (same semantics as ``start_lat``).
     """
 
     cluster_id: int | None = None
     cluster_name: str | None = None
+    start_lat: float | None = None
+    start_lon: float | None = None
+    end_lat: float | None = None
+    end_lon: float | None = None
 
     @classmethod
     def update_sql(cls, table: str) -> str:
@@ -321,10 +333,18 @@ def cluster_partition(
     ).fit_predict(safe)
 
 
+def _centroid_pos(pos_dicts: list[dict]) -> dict:
+    """Median of per-route position dicts."""
+    return {
+        key: float(np.median([d[key] for d in pos_dicts]))
+        for key in ("start_lat", "start_lon", "end_lat", "end_lon")
+    }
+
+
 def partition_by_location(
     valid_routes: list[pd.DataFrame],
     config: RouteClusterConfig,
-) -> list[list[int]]:
+) -> tuple[list[list[int]], list[dict]]:
     """Group route indices by shared start/end location using haversine DBSCAN.
 
     Uses haversine distance on lat/lon so that routes anywhere in the world
@@ -335,16 +355,25 @@ def partition_by_location(
         config: Clustering configuration.
 
     Returns:
-        List of route-index groups; only groups with at least
-        ``config.min_samples`` members are included.
+        Tuple of:
+        - Route-index groups; only groups with at least ``config.min_samples``
+          members are included.
+        - Per-route position dicts, aligned to ``valid_routes``.
     """
-    start_lats = np.radians([df["latitude"].iloc[0] for df in valid_routes])
-    start_lons = np.radians([df["longitude"].iloc[0] for df in valid_routes])
-    end_lats = np.radians([df["latitude"].iloc[-1] for df in valid_routes])
-    end_lons = np.radians([df["longitude"].iloc[-1] for df in valid_routes])
+    pos_dicts = [
+        {
+            "start_lat": float(df["latitude"].iloc[0]),
+            "start_lon": float(df["longitude"].iloc[0]),
+            "end_lat": float(df["latitude"].iloc[-1]),
+            "end_lon": float(df["longitude"].iloc[-1]),
+        }
+        for df in valid_routes
+    ]
 
-    start_pts = np.column_stack([start_lats, start_lons])
-    end_pts = np.column_stack([end_lats, end_lons])
+    start_pts = np.radians(
+        [(d["start_lat"], d["start_lon"]) for d in pos_dicts]
+    )
+    end_pts = np.radians([(d["end_lat"], d["end_lon"]) for d in pos_dicts])
 
     # min_samples=1 so every route gets a partition label.
     start_labels = DBSCAN(
@@ -358,12 +387,14 @@ def partition_by_location(
     for i, (sl, el) in enumerate(zip(start_labels, end_labels)):
         partitions.setdefault((int(sl), int(el)), []).append(i)
 
-    return [m for m in partitions.values() if len(m) >= config.min_samples]
+    groups = [m for m in partitions.values() if len(m) >= config.min_samples]
+    return groups, pos_dicts
 
 
 def resample_partition(
     members: list[int],
     raw_routes: list[pd.DataFrame],
+    route_pos_dicts: list[dict],
     config: RouteClusterConfig,
 ) -> tuple[list[int], list[tuple[np.ndarray, float]]]:
     """Project and resample all routes in a partition using a shared UTM zone.
@@ -374,6 +405,7 @@ def resample_partition(
     Args:
         members: Indices into ``raw_routes`` for this partition.
         raw_routes: Trimmed lat/lon DataFrames for all routes.
+        route_pos_dicts: Per-route position dicts, aligned to ``raw_routes``.
         config: Clustering configuration.
 
     Returns:
@@ -382,11 +414,10 @@ def resample_partition(
           non-zero length after projection (preserves order).
         - ``resampled``: corresponding ``(route_xy, route_length_m)`` tuples.
     """
-    start_lats = [raw_routes[i]["latitude"].iloc[0] for i in members]
-    start_lons = [raw_routes[i]["longitude"].iloc[0] for i in members]
-    centroid_lat = float(np.median(start_lats))
-    centroid_lon = float(np.median(start_lons))
-    _, _, zone_number, zone_letter = utm.from_latlon(centroid_lat, centroid_lon)
+    centroid = _centroid_pos([route_pos_dicts[i] for i in members])
+    _, _, zone_number, zone_letter = utm.from_latlon(
+        centroid["start_lat"], centroid["start_lon"]
+    )
 
     surviving_members = []
     resampled = []
@@ -410,7 +441,7 @@ def partition_and_cluster(
     valid_idx: list,
     valid_routes: list[pd.DataFrame],
     config: RouteClusterConfig,
-) -> list[list]:
+) -> tuple[list[list], dict]:
     """Partition routes by start/end location and cluster within each partition.
 
     Fréchet distances across all partitions are computed in a single parallel
@@ -422,17 +453,24 @@ def partition_and_cluster(
         config: Clustering configuration.
 
     Returns:
-        Activity index values grouped into clusters, ordered by cluster size
-        descending (largest first).
+        Tuple of:
+        - Activity index values grouped into clusters, ordered by cluster size
+          descending (largest first).
+        - Per-activity position dict keyed by activity index.
     """
-    raw_partitions = partition_by_location(valid_routes, config)
+    raw_partitions, route_pos_dicts = partition_by_location(
+        valid_routes, config
+    )
+    act_pos_dicts = dict(zip(valid_idx, route_pos_dicts))
 
     # Drop partitions that fall below min_samples after resampling (routes
     # with zero length after NaN filtering are silently excluded).
     resampled_partitions = []
     member_partitions = []
     for members in raw_partitions:
-        surviving, resampled = resample_partition(members, valid_routes, config)
+        surviving, resampled = resample_partition(
+            members, valid_routes, route_pos_dicts, config
+        )
         if len(resampled) >= config.min_samples:
             resampled_partitions.append(resampled)
             member_partitions.append(surviving)
@@ -477,7 +515,7 @@ def partition_and_cluster(
         all_clusters.extend(local_clusters.values())
 
     all_clusters.sort(key=len, reverse=True)
-    return all_clusters
+    return all_clusters, act_pos_dicts
 
 
 def compute_clusters(
@@ -492,11 +530,14 @@ def compute_clusters(
     Activities with GPS data are clustered by discrete Fréchet distance. The
     GPS pipeline is computed as follows:
     1. Load latitude/longitude data for each activity file.
-    2. Partition activities based on shared start and end locations.
+    2. Extract start/end positions per route and partition activities by shared
+       start and end locations.
     3. Project each partition into its local UTM zone and resample routes to a
        point count proportional to route length.
     4. Compute pairwise discrete Fréchet distances within each partition.
     5. Cluster within each partition on the distance matrix.
+    6. Assign each cluster a representative start/end position (median of member
+       routes); unmatched GPS activities retain their raw start/end.
 
     File-based activities that yield no GPS data (e.g. trainer rides on a
     non-simulated course) are clustered by activity description instead.
@@ -524,10 +565,10 @@ def compute_clusters(
     results = [ClusterResult() for _ in activities.index]
 
     # GPS clustering, named by modal activity description
-    gps_clusters = (
+    gps_clusters, act_pos_dicts = (
         partition_and_cluster(valid_idx, valid_routes, config)
         if valid_routes
-        else []
+        else ([], {})
     )
     gps_clusters_named = [
         (activities.loc[idx_list, config.name_col].mode().iat[0], idx_list)
@@ -544,6 +585,7 @@ def compute_clusters(
     ]
 
     # Merge and renumber by size (0 = most frequent)
+    gps_cluster_ids = {id(idx_list) for idx_list in gps_clusters}
     pos_of = {idx: pos for pos, idx in enumerate(activities.index)}
     all_clusters = sorted(
         gps_clusters_named + name_clusters,
@@ -551,10 +593,21 @@ def compute_clusters(
         reverse=True,
     )
     for global_id, (cluster_name, idx_list) in enumerate(all_clusters):
+        pos = (
+            _centroid_pos([act_pos_dicts[idx] for idx in idx_list])
+            if id(idx_list) in gps_cluster_ids
+            else {}
+        )
         for act_idx in idx_list:
             results[pos_of[act_idx]] = ClusterResult(
-                cluster_id=global_id, cluster_name=cluster_name
+                cluster_id=global_id, cluster_name=cluster_name, **pos
             )
+
+    # Populate raw start/end for GPS activities that didn't form a cluster
+    clustered_idx = {idx for idx_list in gps_clusters for idx in idx_list}
+    for act_idx in valid_idx:
+        if act_idx not in clustered_idx:
+            results[pos_of[act_idx]] = ClusterResult(**act_pos_dicts[act_idx])
 
     return results
 
@@ -594,6 +647,12 @@ def cluster_routes(
           ``pd.NA`` for unmatched or no-file activities.
         - ``cluster_name``: Mode of activity names within the cluster,
           ``None`` for unmatched activities.
+        - ``start_lat``, ``start_lon``: Representative start position.
+          Cluster centroid (median) for GPS-clustered activities; raw
+          route start for GPS activities below ``min_samples``; ``None``
+          for activities without GPS data.
+        - ``end_lat``, ``end_lon``: Representative end position (same
+          semantics as ``start_lat``/``start_lon``).
     """
     if config is None:
         config = RouteClusterConfig()
@@ -635,8 +694,7 @@ def cluster_routes_cached(
         config: Clustering configuration.
 
     Returns:
-        DataFrame with ``cluster_id`` and ``cluster_name`` columns, indexed
-        like ``activities``.
+        DataFrame identical to ``cluster_routes``.
     """
     if cache_dir is None:
         return cluster_routes(activities, segments, path, cache_dir, config)
