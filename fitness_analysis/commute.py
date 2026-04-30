@@ -91,7 +91,7 @@ class CommuteMetrics:
         }
 
     @classmethod
-    def from_db_dict(cls, row: dict) -> "CommuteMetrics":
+    def from_db_dict(cls, row: dict) -> CommuteMetrics:
         """Construct from a ``db["commutes"].rows`` row dict."""
         return cls(
             date=pd.Timestamp(row["date"]),
@@ -441,7 +441,7 @@ def build_commute_columns(
     home_tz: Callable[[pd.Series], pd.Series | str] | str,
     cache_dir: str | PathLike[str] | None,
     config: CommuteConfig,
-) -> list[dict]:
+) -> tuple[pd.DataFrame, pd.DataFrame | None]:
     """Compute all derived per-commute columns with a cache lookup.
 
     Reads the commutes cache, processes misses, and optionally runs route
@@ -459,9 +459,10 @@ def build_commute_columns(
 
     Returns:
         Tuple of:
-        - ``results``: list of result dicts, one per commute split.
-        - ``clusters``: full cluster DataFrame (including position columns)
-          when clustering is enabled, or ``None`` otherwise.
+        - ``calcs``: One row per commute split, indexed by local split start
+          time, with cache-schema column names.
+        - ``clusters``: Full cluster assignments including position columns,
+          or ``None`` when clustering is disabled.
     """
     cache = load_commutes_cache(cache_dir) if cache_dir is not None else None
 
@@ -474,6 +475,7 @@ def build_commute_columns(
     tz_series = pd.Series(np.nan, index=csv_commutes.index, dtype=object)
     tz_series = tz_series.mask(tz_series.isna(), home_tz)
 
+    # Keyed by UTC timestamp (no filename for CSV-only activities).
     csv_splits = {
         utc_date: process_commute_csv(
             activity, utc_date, tz_series.loc[utc_date], config
@@ -489,24 +491,26 @@ def build_commute_columns(
         else:
             metrics.extend(file_splits[fn])
 
-    results = [dataclasses.asdict(m) for m in metrics]
+    segments = [m.segment for m in metrics]
+    calcs = (
+        pd.DataFrame([dataclasses.asdict(m) for m in metrics])
+        .set_index("date")
+        .astype({"segment": "Int64"})
+    )
 
     if config.clustering is None:
-        return results, None
+        return calcs, None
 
     clusters = routes.cluster_routes_cached(
-        pd.DataFrame(results),
-        [r["segment"] for r in results],
+        calcs,
+        segments,
         path,
         cache_dir,
         "commutes",
         config.clustering,
     )
-    for i, r in enumerate(results):
-        r["cluster_id"] = clusters["cluster_id"].iat[i]
-        r["cluster_name"] = clusters["cluster_name"].iat[i]
 
-    return results, clusters
+    return calcs, clusters
 
 
 # ---------------------------------------------------------------------------
@@ -555,7 +559,7 @@ def load_commute_activities(
 
     csv = strava.load_strava_activities_raw(path)
     commutes_csv = csv[csv["Commute"].fillna(False)]
-    results, clusters = build_commute_columns(
+    calcs, clusters = build_commute_columns(
         commutes_csv, path, home_tz, cache_dir, config
     )
 
@@ -571,26 +575,17 @@ def load_commute_activities(
     if config.clustering is not None:
         columns += ["cluster_id", "cluster_name"]
 
-    if not results:
+    if calcs.empty:
         empty = pd.DataFrame(columns=columns, index=pd.Index([], name="date"))
         return empty, None
 
-    commutes_df = (
-        pd.DataFrame(results)
-        .set_index("date")
-        .assign(
-            elapsed_time=lambda d: pd.to_timedelta(
-                d["elapsed_time_s"], unit="s"
-            ),
-            moving_time=lambda d: pd.to_timedelta(
-                d["moving_time_s"].fillna(0), unit="s"
-            ).where(d["moving_time_s"].notna()),
-            segment=lambda d: d["segment"].astype("Int64"),
-        )
-        .drop(columns=["elapsed_time_s", "moving_time_s"])
+    base_df = calcs if clusters is None else calcs.join(clusters)
+    commutes_df = base_df.assign(
+        elapsed_time=lambda d: pd.to_timedelta(d["elapsed_time_s"], unit="s"),
+        moving_time=lambda d: pd.to_timedelta(
+            d["moving_time_s"].fillna(0), unit="s"
+        ).where(d["moving_time_s"].notna()),
     )[columns]
-    if config.clustering is not None:
-        commutes_df["cluster_id"] = commutes_df["cluster_id"].astype("Int64")
 
     spans_df = None
     if config.span_detection is not None and clusters is not None:

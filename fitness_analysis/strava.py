@@ -80,7 +80,7 @@ class ActivityMetrics:
         }
 
     @classmethod
-    def from_db_dict(cls, row: dict) -> "ActivityMetrics":
+    def from_db_dict(cls, row: dict) -> ActivityMetrics:
         """Construct from a ``db["activities"].rows_where()`` row dict."""
         return cls(**{f.name: row[f.name] for f in dataclasses.fields(cls)})
 
@@ -264,7 +264,7 @@ def build_activity_columns(
     home_tz: Callable[[pd.Series], pd.Series | str] | str,
     cache_dir: str | PathLike[str] | None,
     config: ActivitiesConfig,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, pd.DataFrame | None]:
     """Compute all derived per-activity columns with a cache lookup.
 
     Reads the activities cache, computes file metrics (timezone, heart rate,
@@ -279,7 +279,10 @@ def build_activity_columns(
         config: Activities configuration.
 
     Returns:
-        Computed columns aligned to the index of ``csv``.
+        Tuple of:
+        - ``calcs``: Computed columns aligned to the index of ``csv``.
+        - ``clusters``: Cluster assignments including position columns, or
+          ``None`` when clustering is disabled.
     """
     cache = load_activities_cache(cache_dir) if cache_dir is not None else None
 
@@ -296,19 +299,18 @@ def build_activity_columns(
         for date, tz in zip(calcs.index, calcs["timezone_used"])
     ]
 
-    if config.clustering is not None:
-        clusters = routes.cluster_routes_cached(
-            csv,
-            None,
-            path,
-            cache_dir,
-            "activities",
-            config.clustering,
-        )
-        calcs["cluster_id"] = clusters["cluster_id"]
-        calcs["cluster_name"] = clusters["cluster_name"]
+    if config.clustering is None:
+        return calcs, None
 
-    return calcs
+    clusters = routes.cluster_routes_cached(
+        csv,
+        None,
+        path,
+        cache_dir,
+        "activities",
+        config.clustering,
+    )
+    return calcs, clusters
 
 
 # ---------------------------------------------------------------------------
@@ -377,7 +379,9 @@ def load_strava_activities(
         config = ActivitiesConfig()
 
     csv = load_strava_activities_raw(path)
-    calcs = build_activity_columns(csv, path, home_tz, cache_dir, config)
+    calcs, clusters = build_activity_columns(
+        csv, path, home_tz, cache_dir, config
+    )
 
     df = pd.DataFrame()
     df["date"] = calcs["local_date"]
@@ -391,9 +395,9 @@ def load_strava_activities(
     df["moving_time"] = pd.to_timedelta(csv["Moving Time"], unit="s")
     df["max_heart_rate"] = calcs["max_heart_rate"]
     df["estimated_ftp"] = calcs["estimated_ftp"]
-    if config.clustering is not None:
-        df["cluster_id"] = calcs["cluster_id"]
-        df["cluster_name"] = calcs["cluster_name"]
+    if clusters is not None:
+        df["cluster_id"] = clusters["cluster_id"]
+        df["cluster_name"] = clusters["cluster_name"]
     df["filename"] = csv["Filename"]
 
     activities = df.set_index("date").sort_index()

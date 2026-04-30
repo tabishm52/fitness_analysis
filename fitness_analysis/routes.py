@@ -107,14 +107,14 @@ class ClusterResult:
         return (*dataclasses.asdict(self).values(), filename, segment)
 
     @classmethod
-    def from_db_dict(cls, row: dict) -> "ClusterResult":
+    def from_db_dict(cls, row: dict) -> ClusterResult:
         """Construct from a ``db[table].rows_where()`` row dict."""
         return cls(**{f.name: row[f.name] for f in dataclasses.fields(cls)})
 
 
 def compute_cluster_fingerprint(
-    keys: Iterable["tuple[str, int] | None"],
-    config: "RouteClusterConfig",
+    keys: Iterable[tuple[str, int] | None],
+    config: RouteClusterConfig,
 ) -> str:
     """Compute an MD5 fingerprint of the activity keys and clustering config.
 
@@ -669,7 +669,7 @@ def cluster_routes_cached(
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None,
     table: Literal["activities", "commutes"],
-    config: RouteClusterConfig = RouteClusterConfig(),
+    config: RouteClusterConfig | None = None,
 ) -> pd.DataFrame:
     """Cluster bicycle routes, reading from and writing to the cache DB.
 
@@ -696,6 +696,9 @@ def cluster_routes_cached(
     Returns:
         DataFrame identical to ``cluster_routes``.
     """
+    if config is None:
+        config = RouteClusterConfig()
+
     if cache_dir is None:
         return cluster_routes(activities, segments, path, cache_dir, config)
 
