@@ -10,8 +10,9 @@ from os import PathLike
 import numpy as np
 import pandas as pd
 import sqlite_utils
+from sklearn.preprocessing import StandardScaler
 
-from . import cache_db, records, routes, strava, utils
+from . import cache_db, changepoints, records, routes, strava, utils
 
 
 @dataclass
@@ -29,6 +30,8 @@ class CommuteConfig:
             as morning; at or after which it is classified as afternoon.
         clustering: Route clustering parameters. If None, ``cluster_id`` and
             ``cluster_name`` columns are not added to returned activities.
+        span_detection: Span detection parameters. Requires ``clustering``
+            to be non-None. If None, span detection is skipped.
     """
 
     delta: pd.Timedelta = pd.Timedelta(90, "m")
@@ -38,6 +41,9 @@ class CommuteConfig:
     morning_cutoff_hour: int = 12
     clustering: routes.RouteClusterConfig | None = dataclasses.field(
         default_factory=routes.RouteClusterConfig
+    )
+    span_detection: changepoints.SpanConfig | None = dataclasses.field(
+        default_factory=changepoints.SpanConfig
     )
 
 
@@ -389,6 +395,46 @@ def load_commute_splits(
     return splits
 
 
+def commute_spans_signal(
+    direction: pd.Series,
+    clusters: pd.DataFrame,
+) -> tuple[np.ndarray, pd.DatetimeIndex]:
+    """Build a scaled 4D home/work position signal for span detection.
+
+    Args:
+        direction: Per-commute direction (``"Morning"`` or ``"Afternoon"``),
+            with a DatetimeIndex.
+        clusters: Cluster DataFrame with ``start_lat``, ``start_lon``,
+            ``end_lat``, ``end_lon`` columns, aligned to ``direction``.
+
+    Returns:
+        Tuple of:
+        - Scaled ``(N, 4)`` signal array.
+        - Aligned DatetimeIndex after dropping rows without GPS data.
+    """
+    is_morning = (direction == "Morning").to_numpy()
+    positions = pd.DataFrame(
+        {
+            "home_lat": np.where(
+                is_morning, clusters["start_lat"], clusters["end_lat"]
+            ),
+            "home_lon": np.where(
+                is_morning, clusters["start_lon"], clusters["end_lon"]
+            ),
+            "work_lat": np.where(
+                is_morning, clusters["end_lat"], clusters["start_lat"]
+            ),
+            "work_lon": np.where(
+                is_morning, clusters["end_lon"], clusters["start_lon"]
+            ),
+        },
+        index=direction.index,
+    ).dropna()
+
+    signal = StandardScaler().fit_transform(positions.values)
+    return signal, positions.index
+
+
 def build_commute_columns(
     commutes: pd.DataFrame,
     path: str | PathLike[str],
@@ -412,7 +458,10 @@ def build_commute_columns(
         config: Configuration parameters.
 
     Returns:
-        List of result dicts, one per commute split.
+        Tuple of:
+        - ``results``: list of result dicts, one per commute split.
+        - ``clusters``: full cluster DataFrame (including position columns)
+          when clustering is enabled, or ``None`` otherwise.
     """
     cache = load_commutes_cache(cache_dir) if cache_dir is not None else None
 
@@ -442,20 +491,22 @@ def build_commute_columns(
 
     results = [dataclasses.asdict(m) for m in metrics]
 
-    if config.clustering is not None:
-        clusters = routes.cluster_routes_cached(
-            pd.DataFrame(results),
-            [r["segment"] for r in results],
-            path,
-            cache_dir,
-            "commutes",
-            config.clustering,
-        )
-        for i, r in enumerate(results):
-            r["cluster_id"] = clusters["cluster_id"].iat[i]
-            r["cluster_name"] = clusters["cluster_name"].iat[i]
+    if config.clustering is None:
+        return results, None
 
-    return results
+    clusters = routes.cluster_routes_cached(
+        pd.DataFrame(results),
+        [r["segment"] for r in results],
+        path,
+        cache_dir,
+        "commutes",
+        config.clustering,
+    )
+    for i, r in enumerate(results):
+        r["cluster_id"] = clusters["cluster_id"].iat[i]
+        r["cluster_name"] = clusters["cluster_name"].iat[i]
+
+    return results, clusters
 
 
 # ---------------------------------------------------------------------------
@@ -468,7 +519,7 @@ def load_commute_activities(
     home_tz: Callable[[pd.Series], pd.Series | str] | str,
     cache_dir: str | PathLike[str] | None = None,
     config: CommuteConfig | None = None,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, pd.DataFrame | None]:
     """Calculate summary metrics for a set of commute activities.
 
     Loads bicycling activities from a Strava export, filters to commutes,
@@ -480,6 +531,11 @@ def load_commute_activities(
     deriving metrics from the Strava CSV fields and using ``home_tz`` to
     determine the local date.
 
+    When ``config.span_detection`` is set, changepoint detection is run to
+    identify periods of consistent commute endpoints. Each detected span
+    represents a contiguous block of commutes between the same home location
+    and workplace.
+
     Args:
         path: Strava export directory.
         home_tz: Timezone for commutes without GPS location data. Either a
@@ -490,14 +546,18 @@ def load_commute_activities(
         config: Optional config parameters. Defaults to ``CommuteConfig()``.
 
     Returns:
-        Summary metrics from commute activities indexed by local date.
+        Tuple of:
+        - ``commutes_df``: Summary metrics indexed by local date.
+        - ``spans_df``: Detected spans, or ``None`` when not configured.
     """
     if config is None:
         config = CommuteConfig()
 
     csv = strava.load_strava_activities_raw(path)
-    commutes = csv[csv["Commute"].fillna(False)]
-    results = build_commute_columns(commutes, path, home_tz, cache_dir, config)
+    commutes_csv = csv[csv["Commute"].fillna(False)]
+    results, clusters = build_commute_columns(
+        commutes_csv, path, home_tz, cache_dir, config
+    )
 
     columns = [
         "description",
@@ -512,9 +572,10 @@ def load_commute_activities(
         columns += ["cluster_id", "cluster_name"]
 
     if not results:
-        return pd.DataFrame(columns=columns, index=pd.Index([], name="date"))
+        empty = pd.DataFrame(columns=columns, index=pd.Index([], name="date"))
+        return empty, None
 
-    df = (
+    commutes_df = (
         pd.DataFrame(results)
         .set_index("date")
         .assign(
@@ -529,5 +590,11 @@ def load_commute_activities(
         .drop(columns=["elapsed_time_s", "moving_time_s"])
     )[columns]
     if config.clustering is not None:
-        df["cluster_id"] = df["cluster_id"].astype("Int64")
-    return df
+        commutes_df["cluster_id"] = commutes_df["cluster_id"].astype("Int64")
+
+    spans_df = None
+    if config.span_detection is not None and clusters is not None:
+        signal, idx = commute_spans_signal(commutes_df["direction"], clusters)
+        spans_df = changepoints.detect_spans(signal, idx, config.span_detection)
+
+    return commutes_df, spans_df
