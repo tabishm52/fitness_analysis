@@ -24,9 +24,12 @@ dependencies = [
 [tool.uv.sources]
 activity-parser = { workspace = true }
 
+[dependency-groups]
+dev = ["pre-commit", "ruff"]
+
 [tool.ruff]
 line-length = 80
-target-version = "py313"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "PL", "UP"]
