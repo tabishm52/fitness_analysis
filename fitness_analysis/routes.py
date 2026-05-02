@@ -585,17 +585,17 @@ def compute_clusters(
     ]
 
     # Merge and renumber by size (0 = most frequent)
-    gps_cluster_ids = {id(idx_list) for idx_list in gps_clusters}
     pos_of = {idx: pos for pos, idx in enumerate(activities.index)}
     all_clusters = sorted(
-        gps_clusters_named + name_clusters,
+        [(name, idx_list, True) for name, idx_list in gps_clusters_named]
+        + [(name, idx_list, False) for name, idx_list in name_clusters],
         key=lambda x: len(x[1]),
         reverse=True,
     )
-    for global_id, (cluster_name, idx_list) in enumerate(all_clusters):
+    for global_id, (cluster_name, idx_list, has_gps) in enumerate(all_clusters):
         pos = (
             _centroid_pos([act_pos_dicts[idx] for idx in idx_list])
-            if id(idx_list) in gps_cluster_ids
+            if has_gps
             else {}
         )
         for act_idx in idx_list:
