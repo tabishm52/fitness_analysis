@@ -3,7 +3,9 @@
 import numpy as np
 import pandas as pd
 import pint
+import ruptures as rpt
 import timezonefinder
+from sklearn.preprocessing import StandardScaler
 
 # Unit conversion factors derived from pint
 _ureg = pint.UnitRegistry()
@@ -167,3 +169,48 @@ def identify_inactive_periods(
 
     # Return True where velocity stays below the threshold for min_duration.
     return (durations >= min_duration.total_seconds()) & below_threshold
+
+
+# ---------------------------------------------------------------------------
+# Changepoint detection
+# ---------------------------------------------------------------------------
+
+
+def pelt_segments(
+    signal: pd.DataFrame,
+    penalty: float,
+    min_size: int,
+) -> pd.DataFrame:
+    """Detect changepoints in a signal using PELT.
+
+    Scales ``signal`` before fitting so that all features contribute equally
+    regardless of their units or variance.
+
+    Args:
+        signal: ``(N, D)`` DataFrame of features. Rows with any NaN are
+            dropped before fitting.
+        penalty: PELT penalty. Higher values produce fewer segments.
+        min_size: Minimum observations per segment.
+
+    Returns:
+        One row per detected span with ``start`` and ``end`` columns.
+        Empty if the signal has zero rows.
+    """
+    signal = signal.dropna()
+    index = signal.index
+
+    if len(signal) == 0:
+        return pd.DataFrame(columns=["start", "end"])
+
+    scaled = StandardScaler().fit_transform(signal.values)
+    breakpoints = (
+        rpt.Pelt(model="l2", min_size=min_size, jump=1)
+        .fit(scaled)
+        .predict(pen=penalty)
+    )
+
+    starts = [index[0]] + [index[bp] for bp in breakpoints[:-1]]
+    ends = [index[bp - 1] for bp in breakpoints[:-1]] + [index[-1]]
+    return pd.DataFrame(
+        {"start": starts, "end": ends}, index=range(len(starts))
+    )

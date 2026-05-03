@@ -10,9 +10,8 @@ from os import PathLike
 import numpy as np
 import pandas as pd
 import sqlite_utils
-from sklearn.preprocessing import StandardScaler
 
-from . import cache_db, changepoints, records, routes, strava, utils
+from . import cache_db, records, routes, strava, utils
 
 
 @dataclass
@@ -28,10 +27,11 @@ class CommuteConfig:
         min_stop_duration: Minimum stop duration to exclude from moving time.
         morning_cutoff_hour: Hour (0-23) before which a commute is classified
             as morning; at or after which it is classified as afternoon.
-        clustering: Route clustering parameters. If None, ``cluster_id`` and
-            ``cluster_name`` columns are not added to returned activities.
-        span_detection: Span detection parameters. Requires ``clustering``
-            to be non-None. If None, span detection is skipped.
+        clustering: Route clustering parameters. If None, ``cluster_id``,
+            ``cluster_name``, and span columns are not added to the output.
+        span_penalty: Changepoint detection penalty. Higher values produce
+            fewer spans.
+        span_min_size: Minimum number of commutes per span.
     """
 
     delta: pd.Timedelta = pd.Timedelta(90, "m")
@@ -42,9 +42,8 @@ class CommuteConfig:
     clustering: routes.RouteClusterConfig | None = dataclasses.field(
         default_factory=routes.RouteClusterConfig
     )
-    span_detection: changepoints.SpanConfig | None = dataclasses.field(
-        default_factory=changepoints.SpanConfig
-    )
+    span_penalty: float = 100.0
+    span_min_size: int = 2
 
 
 @dataclass(kw_only=True)
@@ -395,46 +394,6 @@ def load_commute_splits(
     return splits
 
 
-def commute_spans_signal(
-    direction: pd.Series,
-    clusters: pd.DataFrame,
-) -> tuple[np.ndarray, pd.DatetimeIndex]:
-    """Build a scaled 4D home/work position signal for span detection.
-
-    Args:
-        direction: Per-commute direction (``"Morning"`` or ``"Afternoon"``),
-            with a DatetimeIndex.
-        clusters: Cluster DataFrame with ``start_lat``, ``start_lon``,
-            ``end_lat``, ``end_lon`` columns, aligned to ``direction``.
-
-    Returns:
-        Tuple of:
-        - Scaled ``(N, 4)`` signal array.
-        - Aligned DatetimeIndex after dropping rows without GPS data.
-    """
-    is_morning = (direction == "Morning").to_numpy()
-    positions = pd.DataFrame(
-        {
-            "home_lat": np.where(
-                is_morning, clusters["start_lat"], clusters["end_lat"]
-            ),
-            "home_lon": np.where(
-                is_morning, clusters["start_lon"], clusters["end_lon"]
-            ),
-            "work_lat": np.where(
-                is_morning, clusters["end_lat"], clusters["start_lat"]
-            ),
-            "work_lon": np.where(
-                is_morning, clusters["end_lon"], clusters["start_lon"]
-            ),
-        },
-        index=direction.index,
-    ).dropna()
-
-    signal = StandardScaler().fit_transform(positions.values)
-    return signal, positions.index
-
-
 def build_commute_columns(
     commutes: pd.DataFrame,
     path: str | PathLike[str],
@@ -513,6 +472,64 @@ def build_commute_columns(
     return calcs, clusters
 
 
+def compute_spans(
+    commutes_df: pd.DataFrame,
+    clusters: pd.DataFrame,
+    config: CommuteConfig,
+) -> pd.DataFrame | None:
+    """Detect commute spans and add a commute count to each.
+
+    Builds the home/work position signal from ``clusters``, runs PELT
+    changepoint detection, and annotates each span with ``n_commutes``.
+
+    Args:
+        commutes_df: Commutes indexed by local date, must include ``direction``.
+        clusters: Cluster result DataFrame aligned to ``commutes_df``.
+        config: Configuration parameters.
+
+    Returns:
+        Spans DataFrame with ``start``, ``end``, and ``n_commutes`` columns,
+        or ``None`` when no spans are detected.
+    """
+    is_morning = (commutes_df["direction"] == "Morning").to_numpy()
+    signal = pd.DataFrame(
+        {
+            "home_lat": np.where(
+                is_morning, clusters["start_lat"], clusters["end_lat"]
+            ),
+            "home_lon": np.where(
+                is_morning, clusters["start_lon"], clusters["end_lon"]
+            ),
+            "work_lat": np.where(
+                is_morning, clusters["end_lat"], clusters["start_lat"]
+            ),
+            "work_lon": np.where(
+                is_morning, clusters["end_lon"], clusters["start_lon"]
+            ),
+        },
+        index=commutes_df.index,
+    )
+
+    spans_df = utils.pelt_segments(
+        signal, config.span_penalty, config.span_min_size
+    )
+
+    rows = []
+    for _, span in spans_df.iterrows():
+        in_span = (commutes_df.index >= span["start"]) & (
+            commutes_df.index <= span["end"]
+        )
+        rows.append(
+            {
+                "start_date": span["start"].normalize(),
+                "end_date": span["end"].normalize(),
+                "n_commutes": int(in_span.sum()),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
 # ---------------------------------------------------------------------------
 # Top-level entry point
 # ---------------------------------------------------------------------------
@@ -535,10 +552,9 @@ def load_commute_activities(
     deriving metrics from the Strava CSV fields and using ``home_tz`` to
     determine the local date.
 
-    When ``config.span_detection`` is set, changepoint detection is run to
-    identify periods of consistent commute endpoints. Each detected span
-    represents a contiguous block of commutes between the same home location
-    and workplace.
+    When clustering is enabled, changepoint detection is run to identify
+    periods of consistent commute endpoints. Each detected span represents a
+    contiguous block of commutes between the same home location and workplace.
 
     Args:
         path: Strava export directory.
@@ -587,9 +603,10 @@ def load_commute_activities(
         ).where(d["moving_time_s"].notna()),
     )[columns]
 
-    spans_df = None
-    if config.span_detection is not None and clusters is not None:
-        signal, idx = commute_spans_signal(commutes_df["direction"], clusters)
-        spans_df = changepoints.detect_spans(signal, idx, config.span_detection)
+    spans_df = (
+        compute_spans(commutes_df, clusters, config)
+        if config.clustering is not None
+        else None
+    )
 
     return commutes_df, spans_df

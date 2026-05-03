@@ -1,6 +1,5 @@
 """Analysis tools for fitness activity data from Strava and MyNetDiary."""
 
-from .changepoints import SpanConfig
 from .commute import (
     CommuteConfig,
     invalidate_commutes_cache,
@@ -30,7 +29,6 @@ __all__ = [
     "CommuteConfig",
     "MndTuning",
     "RouteClusterConfig",
-    "SpanConfig",
     "cluster_routes",
     "eer_female",
     "eer_male",
