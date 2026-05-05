@@ -16,15 +16,12 @@ import similaritymeasures
 import utm
 from sklearn.cluster import DBSCAN
 
-from . import cache_db, records
+from . import cache_db, geocoding, records, utils
 
 # Parallel processing: min_pairs is where pool startup overhead is justified;
 # chunk_size balances IPC overhead vs load balance. (tuned on Apple M1 Pro)
 PARALLEL_MIN_PAIRS = 30000
 PARALLEL_CHUNK_SIZE = 50
-
-# WGS-84 semi-major axis in metres, consistent with the UTM projection
-EARTH_RADIUS_M: float = 6_378_137.0
 
 
 @dataclass
@@ -42,6 +39,8 @@ class RouteClusterConfig:
         min_samples: Minimum rides on a route for it to form a cluster.
         length_ratio_max: Routes longer than this multiple of each other
             are skipped without computing a full shape comparison.
+        geocoding: Geocoding parameters. If ``None``, ``start_address`` and
+            ``end_address`` will be absent from cluster results.
     """
 
     points_per_km: float = 1.0
@@ -51,11 +50,14 @@ class RouteClusterConfig:
     similarity_eps: float = 0.02
     min_samples: int = 2
     length_ratio_max: float = 1.2
+    geocoding: geocoding.GeocodingConfig | None = dataclasses.field(
+        default_factory=geocoding.GeocodingConfig
+    )
 
     @property
     def partition_eps_rad(self) -> float:
         """``partition_eps_m`` converted to radians."""
-        return self.partition_eps_m / EARTH_RADIUS_M
+        return self.partition_eps_m / utils.EARTH_RADIUS_M
 
     # If True, cluster_routes() uses Strava CSV column names. If False,
     # cluster_routes() uses column names from load_strava_activities().
@@ -95,6 +97,8 @@ class ClusterResult:
     start_lon: float | None = None
     end_lat: float | None = None
     end_lon: float | None = None
+    start_address: str | None = None
+    end_address: str | None = None
 
     @classmethod
     def update_sql(cls, table: str) -> str:
@@ -130,10 +134,9 @@ def compute_cluster_fingerprint(
     Returns:
         MD5 hex digest string.
     """
+    init_fields = {f.name for f in dataclasses.fields(config) if f.init}
     config_dict = {
-        f.name: getattr(config, f.name)
-        for f in dataclasses.fields(config)
-        if f.init  # exclude raw_csv (non-init column-name flag)
+        k: v for k, v in dataclasses.asdict(config).items() if k in init_fields
     }
 
     file_keys = sorted({k for k in keys if k is not None})
@@ -608,6 +611,34 @@ def compute_clusters(
     for act_idx in valid_idx:
         if act_idx not in clustered_idx:
             results[pos_of[act_idx]] = ClusterResult(**act_pos_dicts[act_idx])
+
+    if config.geocoding is not None:
+        addresses = geocoding.geocode_positions(
+            itertools.chain(
+                (
+                    (r.start_lat, r.start_lon)
+                    for r in results
+                    if r.start_lat is not None
+                ),
+                (
+                    (r.end_lat, r.end_lon)
+                    for r in results
+                    if r.end_lat is not None
+                ),
+            ),
+            cache_dir,
+            config.geocoding,
+        )
+
+        for result in results:
+            if result.start_lat is not None:
+                result.start_address = addresses.get(
+                    (result.start_lat, result.start_lon)
+                )
+            if result.end_lat is not None:
+                result.end_address = addresses.get(
+                    (result.end_lat, result.end_lon)
+                )
 
     return results
 

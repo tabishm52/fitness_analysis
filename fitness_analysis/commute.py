@@ -477,10 +477,11 @@ def compute_spans(
     clusters: pd.DataFrame,
     config: CommuteConfig,
 ) -> pd.DataFrame | None:
-    """Detect commute spans and add a commute count to each.
+    """Detect commute spans and enrich them with counts and addresses.
 
     Builds the home/work position signal from ``clusters``, runs PELT
-    changepoint detection, and annotates each span with ``n_commutes``.
+    changepoint detection, then adds ``n_commutes`` and (when geocoding is
+    enabled) ``home_address`` / ``work_address`` to each span row.
 
     Args:
         commutes_df: Commutes indexed by local date, must include ``direction``.
@@ -488,10 +489,15 @@ def compute_spans(
         config: Configuration parameters.
 
     Returns:
-        Spans DataFrame with ``start``, ``end``, and ``n_commutes`` columns,
-        or ``None`` when no spans are detected.
+        Spans DataFrame with ``start_date``, ``end_date``, ``n_commutes``, and
+        optionally ``home_address`` / ``work_address`` columns.
     """
-    is_morning = (commutes_df["direction"] == "Morning").to_numpy()
+    geocoding_enabled = (
+        config.clustering is not None
+        and config.clustering.geocoding is not None
+    )
+
+    is_morning = commutes_df["direction"] == "Morning"
     signal = pd.DataFrame(
         {
             "home_lat": np.where(
@@ -519,13 +525,38 @@ def compute_spans(
         in_span = (commutes_df.index >= span["start"]) & (
             commutes_df.index <= span["end"]
         )
-        rows.append(
-            {
-                "start_date": span["start"].normalize(),
-                "end_date": span["end"].normalize(),
-                "n_commutes": int(in_span.sum()),
-            }
-        )
+
+        row: dict = {
+            "start_date": span["start"].normalize(),
+            "end_date": span["end"].normalize(),
+            "n_commutes": int(in_span.sum()),
+        }
+
+        if geocoding_enabled:
+            morning_mask = in_span & is_morning
+            afternoon_mask = in_span & ~is_morning
+
+            home_addrs = pd.concat(
+                [
+                    clusters.loc[morning_mask, "start_address"],
+                    clusters.loc[afternoon_mask, "end_address"],
+                ]
+            ).dropna()
+            work_addrs = pd.concat(
+                [
+                    clusters.loc[morning_mask, "end_address"],
+                    clusters.loc[afternoon_mask, "start_address"],
+                ]
+            ).dropna()
+
+            row["home_address"] = (
+                home_addrs.mode().iat[0] if len(home_addrs) else None
+            )
+            row["work_address"] = (
+                work_addrs.mode().iat[0] if len(work_addrs) else None
+            )
+
+        rows.append(row)
 
     return pd.DataFrame(rows)
 
@@ -590,6 +621,8 @@ def load_commute_activities(
     ]
     if config.clustering is not None:
         columns += ["cluster_id", "cluster_name"]
+        if config.clustering.geocoding is not None:
+            columns += ["start_address", "end_address"]
 
     if calcs.empty:
         empty = pd.DataFrame(columns=columns, index=pd.Index([], name="date"))

@@ -19,6 +19,7 @@ dependencies = [
     "activity-parser",
     "ruptures",
     "sqlite-utils",
+    "geopy",
 ]
 
 [tool.uv.sources]

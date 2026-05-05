@@ -1,4 +1,6 @@
-"""Common utility functions for fitness_analysis module."""
+"""Shared constants and utility functions for fitness_analysis module."""
+
+import math
 
 import numpy as np
 import pandas as pd
@@ -18,6 +20,10 @@ LBS_TO_KG = _ureg.Quantity(1, "lb").to("kg").magnitude
 # Divided by 7 days/week → kcal/day per lb/week of weight change
 _FAT_KCAL_PER_LB = 3500
 CAL_PER_LB_WEEK = _FAT_KCAL_PER_LB / 7
+
+# Geographical constants
+EARTH_RADIUS_M = 6_378_137.0  # WGS-84 semi-major axis in metres
+EARTH_M_PER_DEG = 2 * math.pi * EARTH_RADIUS_M / 360
 
 # Global timezone finder shared across the fitness_analysis module
 tz_finder = timezonefinder.TimezoneFinder()

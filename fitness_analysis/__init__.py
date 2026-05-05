@@ -5,6 +5,12 @@ from .commute import (
     invalidate_commutes_cache,
     load_commute_activities,
 )
+from .geocoding import (
+    GeocodingConfig,
+    geocode_positions,
+    invalidate_geocode_cache,
+    seed_geocode_cache,
+)
 from .mynetdiary import (
     MndTuning,
     eer_female,
@@ -27,13 +33,16 @@ from .strava import (
 __all__ = [
     "ActivitiesConfig",
     "CommuteConfig",
+    "GeocodingConfig",
     "MndTuning",
     "RouteClusterConfig",
     "cluster_routes",
     "eer_female",
     "eer_male",
+    "geocode_positions",
     "invalidate_activities_cache",
     "invalidate_commutes_cache",
+    "invalidate_geocode_cache",
     "invalidate_mnd_cache",
     "invalidate_records_cache",
     "load_activity_coords",
@@ -41,4 +50,5 @@ __all__ = [
     "load_commute_activities",
     "load_mnd_data",
     "load_strava_activities",
+    "seed_geocode_cache",
 ]

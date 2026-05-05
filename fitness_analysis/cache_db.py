@@ -101,6 +101,8 @@ def ensure_tables(db: sqlite_utils.Database) -> None:
             start_lon      REAL,
             end_lat        REAL,
             end_lon        REAL,
+            start_address  TEXT,
+            end_address    TEXT,
             PRIMARY KEY (filename, segment)
         );
         CREATE TABLE IF NOT EXISTS commutes (
@@ -118,10 +120,19 @@ def ensure_tables(db: sqlite_utils.Database) -> None:
             start_lon      REAL,
             end_lat        REAL,
             end_lon        REAL,
+            start_address  TEXT,
+            end_address    TEXT,
             PRIMARY KEY (filename, segment)
         );
         CREATE TABLE IF NOT EXISTS cluster_fingerprints (
             table_name  TEXT PRIMARY KEY,
             fingerprint TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS geocode_cache (
+            lat          REAL NOT NULL,
+            lon          REAL NOT NULL,
+            display_name TEXT,
+            provider     TEXT,
+            PRIMARY KEY (lat, lon)
         );
     """)
