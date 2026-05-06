@@ -560,8 +560,13 @@ def compute_clusters(
         List of ``ClusterResult`` aligned to ``activities``, one per row.
     """
     has_file = activities[config.filename_col].notna()
+    file_segments = (
+        (seg for seg, keep in zip(segments, has_file) if keep)
+        if segments is not None
+        else None
+    )
     valid_idx, valid_routes = extract_route_features(
-        activities[has_file], segments, path, cache_dir, config
+        activities[has_file], file_segments, path, cache_dir, config
     )
 
     # Start every activity as unmatched

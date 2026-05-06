@@ -202,7 +202,7 @@ def pelt_segments(
         One row per detected span with ``start`` and ``end`` columns.
         Empty if the signal has zero rows.
     """
-    signal = signal.dropna()
+    signal = signal.dropna().sort_index()
     index = signal.index
 
     if len(signal) == 0:

@@ -642,4 +642,4 @@ def load_commute_activities(
         else None
     )
 
-    return commutes_df, spans_df
+    return commutes_df.sort_index(), spans_df
