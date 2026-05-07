@@ -163,18 +163,27 @@ def identify_inactive_periods(
     Returns:
         Time-indexed boolean mask.
     """
-    # Calculate the derivative of series values, in units per second.
-    # (this will be noisy but works well enough for our purposes)
-    velocity = series.resample("s").interpolate().diff()
-    below_threshold = velocity < activity_threshold
+    # Velocity in units/second between consecutive samples; first sample has
+    # no predecessor so we assign zero.
+    t_s = (series.index - series.index[0]).total_seconds().to_numpy()
+    vals = series.to_numpy(dtype=float)
+    velocity = np.concatenate([[0.0], np.diff(vals) / np.diff(t_s)])
 
-    # Split series into segments where velocity remains above or below
-    # threshold, then calculate each segment duration.
-    group_ids = below_threshold.ne(below_threshold.shift()).cumsum()
-    durations = below_threshold.groupby(group_ids, sort=False).transform("size")
+    # Identify starts and ends of contiguous runs below velocity threshold;
+    # padding ensures every run has a start and end
+    below = velocity < activity_threshold
+    below_pad = np.concatenate([[False], below, [False]])
+    change_at = np.diff(below_pad).nonzero()[0]
+    starts, ends = change_at[0::2], change_at[1::2]
 
-    # Return True where velocity stays below the threshold for min_duration.
-    return (durations >= min_duration.total_seconds()) & below_threshold
+    # Mark contiguous runs of sufficient duration
+    result = np.zeros(len(series), dtype=bool)
+    run_durations = t_s[ends - 1] - t_s[starts]
+    long_enough = run_durations >= min_duration.total_seconds()
+    for s, e in zip(starts[long_enough], ends[long_enough]):
+        result[s:e] = True
+
+    return pd.Series(result, index=series.index)
 
 
 # ---------------------------------------------------------------------------
