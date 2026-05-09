@@ -110,13 +110,14 @@ def invalidate_geocode_cache(
         return
 
     with cache_db.open_db(cache_dir) as db:
-        with db.conn:
-            if provider is None:
-                db["geocode_cache"].delete_where()
-            else:
+        if provider is None:
+            with db.conn:
+                db["geocode_cache"].drop()
+                db["cluster_fingerprints"].delete_where()
+        else:
+            with db.conn:
                 db["geocode_cache"].delete_where("provider = ?", [provider])
-
-            db["cluster_fingerprints"].delete_where()
+                db["cluster_fingerprints"].delete_where()
 
 
 def seed_geocode_cache(

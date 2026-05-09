@@ -125,21 +125,23 @@ def invalidate_activities_cache(
     if not cache_db.db_path(cache_dir).exists():
         return
 
-    # Single transaction so the row delete and fingerprint delete are atomic;
-    # delete_where() uses db.execute() directly and participates correctly.
     with cache_db.open_db(cache_dir) as db:
-        with db.conn:
-            if files is None:
-                db["activities"].delete_where()
-            else:
-                files_list = list(files)
-                marks = ",".join("?" * len(files_list))
+        if files is None:
+            with db.conn:
+                db["activities"].drop()
+                db["cluster_fingerprints"].delete_where(
+                    "table_name = ?", ["activities"]
+                )
+        else:
+            files_list = list(files)
+            marks = ",".join("?" * len(files_list))
+            with db.conn:
                 db["activities"].delete_where(
                     f"filename IN ({marks})", files_list
                 )
-            db["cluster_fingerprints"].delete_where(
-                "table_name = ?", ["activities"]
-            )
+                db["cluster_fingerprints"].delete_where(
+                    "table_name = ?", ["activities"]
+                )
 
 
 # ---------------------------------------------------------------------------

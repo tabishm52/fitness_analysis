@@ -173,18 +173,20 @@ def invalidate_commutes_cache(
                 cache_dir,
             )
 
-        # Single transaction: row delete and fingerprint delete are atomic;
-        # delete_where() uses db.execute() directly and participates correctly.
-        with db.conn:
-            if files is None:
-                db["commutes"].delete_where()
-            else:
+        if files is None:
+            with db.conn:
+                db["commutes"].drop()
+                db["cluster_fingerprints"].delete_where(
+                    "table_name = ?", ["commutes"]
+                )
+        else:
+            with db.conn:
                 db["commutes"].delete_where(
                     f"filename IN ({marks})", files_list
                 )
-            db["cluster_fingerprints"].delete_where(
-                "table_name = ?", ["commutes"]
-            )
+                db["cluster_fingerprints"].delete_where(
+                    "table_name = ?", ["commutes"]
+                )
 
 
 # ---------------------------------------------------------------------------
