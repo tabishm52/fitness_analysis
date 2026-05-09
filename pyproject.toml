@@ -15,7 +15,7 @@ dependencies = [
     "scikit-learn",
     "timezonefinder",
     "utm",
-    "similaritymeasures",
+    "shapely",
     "activity-parser",
     "ruptures",
     "sqlite-utils",

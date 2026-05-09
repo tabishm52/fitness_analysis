@@ -5,23 +5,18 @@ import hashlib
 import itertools
 import json
 from collections.abc import Iterable, Iterator
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from os import PathLike
 from typing import Literal
 
 import numpy as np
 import pandas as pd
-import similaritymeasures
 import utm
+from shapely import frechet_distance
+from shapely.geometry import LineString
 from sklearn.cluster import DBSCAN
 
 from . import cache_db, geocoding, records, utils
-
-# Parallel processing: min_pairs is where pool startup overhead is justified;
-# chunk_size balances IPC overhead vs load balance. (tuned on Apple M1 Pro)
-PARALLEL_MIN_PAIRS = 30000
-PARALLEL_CHUNK_SIZE = 50
 
 
 @dataclass
@@ -269,23 +264,14 @@ def frechet_pair(
     if len_a > len_b * length_ratio_max or len_b > len_a * length_ratio_max:
         return np.inf
 
-    raw = similaritymeasures.frechet_dist(xy_a, xy_b)
+    raw = frechet_distance(LineString(xy_a), LineString(xy_b))
     return raw / ((len_a + len_b) / 2.0)
-
-
-def _frechet_pair_packed(args: tuple) -> float:
-    """Picklable single-argument wrapper around ``frechet_pair``."""
-    return frechet_pair(*args)
 
 
 def route_pairs(
     route_list: list[dict], config: RouteClusterConfig
 ) -> Iterator[tuple]:
-    """Generate argument tuples for all pairs in route_list.
-
-    Suitable for unpacking into ``frechet_pair`` or passing to
-    ``_frechet_pair_packed``.
-    """
+    """Generate argument tuples for all pairs in route_list."""
     n = len(route_list)
     for i in range(n):
         for j in range(i + 1, n):
@@ -447,9 +433,6 @@ def partition_and_cluster(
 ) -> tuple[list[list], dict]:
     """Partition routes by start/end location and cluster within each partition.
 
-    Fréchet distances across all partitions are computed in a single parallel
-    batch when the total pair count justifies it.
-
     Args:
         valid_idx: Activity index values corresponding to each route.
         valid_routes: Trimmed lat/lon data from ``extract_route_features``.
@@ -478,44 +461,20 @@ def partition_and_cluster(
             resampled_partitions.append(resampled)
             member_partitions.append(surviving)
 
-    pair_counts = [len(r) * (len(r) - 1) // 2 for r in resampled_partitions]
-    n_pairs_total = sum(pair_counts)
-
-    def all_pairs():
-        for resampled in resampled_partitions:
-            yield from route_pairs(resampled, config)
-
-    if n_pairs_total >= PARALLEL_MIN_PAIRS:
-        with ProcessPoolExecutor() as ex:
-            all_results = list(
-                ex.map(
-                    _frechet_pair_packed,
-                    all_pairs(),
-                    chunksize=PARALLEL_CHUNK_SIZE,
-                )
-            )
-    else:
-        all_results = [frechet_pair(*p) for p in all_pairs()]
-
     all_clusters = []
-    offset = 0
-    for members, resampled, n_pairs in zip(
-        member_partitions, resampled_partitions, pair_counts
-    ):
-        results = all_results[offset : offset + n_pairs]
-        offset += n_pairs
-
-        local_labels = cluster_partition(
+    for members, resampled in zip(member_partitions, resampled_partitions):
+        results = [frechet_pair(*p) for p in route_pairs(resampled, config)]
+        labels = cluster_partition(
             symmetric_matrix(len(resampled), results), config
         )
-        local_clusters: dict[int, list] = {}
-        for local_i, label in enumerate(local_labels):
+
+        clusters = {}
+        for i, label in enumerate(labels):
             if label < 0:
                 continue
-            local_clusters.setdefault(int(label), []).append(
-                valid_idx[members[local_i]]
-            )
-        all_clusters.extend(local_clusters.values())
+            clusters.setdefault(int(label), []).append(valid_idx[members[i]])
+
+        all_clusters.extend(clusters.values())
 
     all_clusters.sort(key=len, reverse=True)
     return all_clusters, act_pos_dicts
