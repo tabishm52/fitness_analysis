@@ -372,10 +372,8 @@ def load_strava_activities(
 
     Returns:
         Tuple of:
-        - ``activities``: One row per ride with distance, elevation, time,
-          heart rate, and FTP metrics indexed by local date.
-        - ``weekly_sums``: Distance, elevation, and time totals resampled to
-          weekly (Sunday) buckets.
+        - ``activities``: Summary metrics indexed by local date.
+        - ``weekly_sums``: Metrics resampled to weekly buckets.
     """
     if config is None:
         config = ActivitiesConfig()
@@ -400,6 +398,9 @@ def load_strava_activities(
     if clusters is not None:
         df["cluster_id"] = clusters["cluster_id"]
         df["cluster_name"] = clusters["cluster_name"]
+        if config.clustering.geocoding is not None:
+            df["start_address"] = clusters["start_address"]
+            df["end_address"] = clusters["end_address"]
     df["filename"] = csv["Filename"]
 
     activities = df.set_index("date").sort_index()
