@@ -2,7 +2,7 @@
 
 import itertools
 import shutil
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from os import PathLike
 from pathlib import Path
@@ -146,6 +146,28 @@ def parse_record_cached(
     return records
 
 
+def coords_from_records(df: pd.DataFrame) -> pd.DataFrame | None:
+    """Extract trimmed lat/lon columns from an already-loaded records DataFrame.
+
+    Args:
+        df: Parsed records DataFrame.
+
+    Returns:
+        Trimmed ``latitude``/``longitude`` data, or ``None`` if GPS data are
+        absent.
+    """
+    if "latitude" not in df.columns:
+        return None
+
+    lat = df["latitude"]
+    first = lat.first_valid_index()
+    if first is None:
+        return None
+
+    last = lat.last_valid_index()
+    return df.loc[first:last, ["latitude", "longitude"]].reset_index(drop=True)
+
+
 def parse_coords_cached(
     filename: str | PathLike[str],
     segment: int | None,
@@ -166,18 +188,8 @@ def parse_coords_cached(
         Trimmed ``latitude``/``longitude`` data, or ``None`` if GPS data are
         absent.
     """
-    rec = parse_record_cached(filename, segment, path, cache_dir)
-
-    if "latitude" not in rec.columns:
-        return None
-
-    lat = rec["latitude"]
-    first = lat.first_valid_index()
-    if first is None:
-        return None
-
-    last = lat.last_valid_index()
-    return rec.loc[first:last, ["latitude", "longitude"]].reset_index(drop=True)
+    records = parse_record_cached(filename, segment, path, cache_dir)
+    return coords_from_records(records)
 
 
 # ---------------------------------------------------------------------------
@@ -296,8 +308,8 @@ def invalidate_records_cache(
 
 
 def load_activity_records(
-    files: pd.Series,
-    segments: Iterable[int | None] | None,
+    files: Sequence[str | PathLike[str]],
+    segments: Sequence[int | None] | None,
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None = None,
 ) -> list[pd.DataFrame]:
@@ -331,8 +343,8 @@ def load_activity_records(
 
 
 def load_activity_coords(
-    files: pd.Series,
-    segments: Iterable[int | None] | None,
+    files: Sequence[str | PathLike[str]],
+    segments: Sequence[int | None] | None,
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None = None,
 ) -> list[pd.DataFrame | None]:

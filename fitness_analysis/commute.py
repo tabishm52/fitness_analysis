@@ -250,7 +250,10 @@ def parse_commute_file(
     config: CommuteConfig,
     cache_dir: str | PathLike[str] | None = None,
     db: sqlite_utils.Database | None = None,
-) -> list[CommuteMetrics]:
+) -> tuple[
+    list[CommuteMetrics],
+    dict[tuple[str, int | None], pd.DataFrame | None],
+]:
     """Calculate summary metrics for one commute activity.
 
     Filters out long inactive periods, splits on gaps greater than
@@ -268,7 +271,10 @@ def parse_commute_file(
         db: Optional open database.
 
     Returns:
-        List of ``CommuteMetrics``, one per commute split.
+        Tuple of:
+        - List of ``CommuteMetrics``, one per commute split.
+        - Preloaded coords dict keyed by ``(filename, segment)`` for each
+          split, ready to merge into the caller's preloaded_coords.
     """
     # Drop periods of inactivity, to cover the cases where the GPS was left
     # on all day rather than being paused between commute segments
@@ -287,13 +293,16 @@ def parse_commute_file(
     groups = list(activity_records.groupby(group_ids, sort=False))
 
     results = []
+    split_coords = {}
+    filename = activity["Filename"]
+
     for i, (_, group) in enumerate(groups):
         seg_idx = None if len(groups) == 1 else i + 1
         if cache_dir is not None and seg_idx is not None:
-            records.cache_record(
-                group, activity["Filename"], seg_idx, cache_dir
-            )
+            records.cache_record(group, filename, seg_idx, cache_dir)
+
         results.append(segment_metrics(activity, group, seg_idx, config))
+        split_coords[(filename, seg_idx)] = records.coords_from_records(group)
 
     if db is not None:
         db["commutes"].upsert_all(
@@ -301,7 +310,7 @@ def parse_commute_file(
             pk=("filename", "segment"),
         )
 
-    return results
+    return results, split_coords
 
 
 def process_commute_csv(
@@ -345,7 +354,10 @@ def load_commute_splits(
     cache_dir: str | PathLike[str] | None,
     config: CommuteConfig,
     cache: dict[str, list[CommuteMetrics]] | None,
-) -> dict[str, list[CommuteMetrics]]:
+) -> tuple[
+    dict[str, list[CommuteMetrics]],
+    dict[tuple[str, int | None], pd.DataFrame | None],
+]:
     """Compute per-commute metrics, using a pre-loaded cache when provided.
 
     Cache misses are computed and written to the DB as each file is parsed.
@@ -358,7 +370,10 @@ def load_commute_splits(
         cache: Commutes cache keyed by filename, or ``None`` to skip caching.
 
     Returns:
-        Dict mapping each filename to its list of commute split metrics.
+        Tuple of:
+        - Dict mapping each filename to its list of commute split metrics.
+        - Preloaded coords dict keyed by ``(filename, segment)`` for each
+          cache-miss split, ready to pass to ``routes.cluster_routes_cached``.
     """
     files = file_commutes["Filename"]
 
@@ -368,9 +383,10 @@ def load_commute_splits(
         splits = {f: None for f in files}
 
     misses = [f for f, r in splits.items() if r is None]
+    preloaded_coords = {}
 
     if not misses:
-        return splits
+        return splits, preloaded_coords
 
     miss_dfs = records.load_activity_records(misses, None, path, cache_dir)
     miss_df_map = dict(zip(misses, miss_dfs))
@@ -384,11 +400,12 @@ def load_commute_splits(
     with ctx as db:
         for _, activity in miss_rows.iterrows():
             fn = activity["Filename"]
-            splits[fn] = parse_commute_file(
+            splits[fn], file_coords = parse_commute_file(
                 activity, miss_df_map[fn], config, cache_dir, db
             )
+            preloaded_coords.update(file_coords)
 
-    return splits
+    return splits, preloaded_coords
 
 
 def build_commute_columns(
@@ -423,7 +440,7 @@ def build_commute_columns(
     cache = load_commutes_cache(cache_dir) if cache_dir is not None else None
 
     file_mask = commutes["Filename"].notna()
-    file_splits = load_commute_splits(
+    file_splits, preloaded_coords = load_commute_splits(
         commutes[file_mask], path, cache_dir, config, cache
     )
 
@@ -463,6 +480,7 @@ def build_commute_columns(
         path,
         cache_dir,
         "commutes",
+        preloaded_coords,
         config.clustering,
     )
 

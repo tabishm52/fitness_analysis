@@ -203,6 +203,7 @@ def extract_route_features(
     segments: Iterable[int | None] | None,
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None,
+    preloaded_coords: dict[tuple[str, int | None], pd.DataFrame | None] | None,
     config: RouteClusterConfig,
 ) -> tuple[list, list[pd.DataFrame]]:
     """Load GPS records and return trimmed lat/lon data for each route.
@@ -214,6 +215,9 @@ def extract_route_features(
             activities as whole-file.
         path: Strava export directory.
         cache_dir: Optional records parquet cache directory.
+        preloaded_coords: Optional mapping of ``(filename, segment)`` to
+            already-extracted lat/lon DataFrames (or ``None`` for no-GPS
+            files).
         config: Clustering configuration.
 
     Returns:
@@ -222,9 +226,29 @@ def extract_route_features(
         - ``valid_routes``: corresponding trimmed lat/lon DataFrames, one per
           valid route (``latitude`` and ``longitude`` columns, NaN-trimmed).
     """
-    coords_list = records.load_activity_coords(
-        activities[config.filename_col], segments, path, cache_dir
-    )
+    if preloaded_coords:
+        fns = activities[config.filename_col]
+        segs = (
+            list(segments) if segments is not None else itertools.repeat(None)
+        )
+
+        misses = [
+            pair for pair in zip(fns, segs) if pair not in preloaded_coords
+        ]
+        miss_coords = records.load_activity_coords(
+            [fn for fn, _ in misses],
+            [s for _, s in misses],
+            path,
+            cache_dir,
+        )
+
+        coords_map = dict(zip(misses, miss_coords)) | preloaded_coords
+        coords_list = [coords_map[pair] for pair in zip(fns, segs)]
+
+    else:
+        coords_list = records.load_activity_coords(
+            activities[config.filename_col], segments, path, cache_dir
+        )
 
     if not any(c is not None for c in coords_list):
         return [], []
@@ -485,6 +509,7 @@ def compute_clusters(
     segments: Iterable[int | None] | None,
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None,
+    preloaded_coords: dict[tuple[str, int | None], pd.DataFrame | None] | None,
     config: RouteClusterConfig,
 ) -> list[ClusterResult]:
     """Cluster bicycle activities by GPS route similarity or activity name.
@@ -513,6 +538,9 @@ def compute_clusters(
             activities as whole-file.
         path: Strava export directory.
         cache_dir: Optional records parquet cache directory.
+        preloaded_coords: Optional mapping of ``(filename, segment)`` to
+            already-extracted lat/lon DataFrames. Passed to
+            ``extract_route_features``; files not present are batch-loaded.
         config: Clustering configuration.
 
     Returns:
@@ -525,7 +553,12 @@ def compute_clusters(
         else None
     )
     valid_idx, valid_routes = extract_route_features(
-        activities[has_file], file_segments, path, cache_dir, config
+        activities[has_file],
+        file_segments,
+        path,
+        cache_dir,
+        preloaded_coords,
+        config,
     )
 
     # Start every activity as unmatched
@@ -653,7 +686,7 @@ def cluster_routes(
         config = RouteClusterConfig()
 
     return pd.DataFrame(
-        compute_clusters(activities, segments, path, cache_dir, config),
+        compute_clusters(activities, segments, path, cache_dir, None, config),
         index=activities.index,
     ).astype({"cluster_id": "Int64"})
 
@@ -664,6 +697,8 @@ def cluster_routes_cached(
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None,
     table: Literal["activities", "commutes"],
+    preloaded_coords: dict[tuple[str, int | None], pd.DataFrame | None]
+    | None = None,
     config: RouteClusterConfig | None = None,
 ) -> pd.DataFrame:
     """Cluster bicycle routes, reading from and writing to the cache DB.
@@ -686,6 +721,10 @@ def cluster_routes_cached(
         cache_dir: Records cache directory. If ``None``, clustering is always
             computed and no DB I/O is performed.
         table: DB table to read from and write cluster columns into.
+        preloaded_coords: Optional mapping of ``(filename, segment)`` to
+            already-extracted lat/lon DataFrames. Passed to
+            ``compute_clusters`` on a stale-fingerprint recompute; ignored
+            on a cache hit.
         config: Clustering configuration.
 
     Returns:
@@ -695,7 +734,17 @@ def cluster_routes_cached(
         config = RouteClusterConfig()
 
     if cache_dir is None:
-        return cluster_routes(activities, segments, path, cache_dir, config)
+        return pd.DataFrame(
+            compute_clusters(
+                activities,
+                segments,
+                path,
+                cache_dir,
+                preloaded_coords,
+                config,
+            ),
+            index=activities.index,
+        ).astype({"cluster_id": "Int64"})
 
     filenames = activities[config.filename_col]
     segs = segments if segments is not None else itertools.repeat(None)
@@ -725,7 +774,14 @@ def cluster_routes_cached(
                 {"cluster_id": "Int64"}
             )
 
-    results = compute_clusters(activities, segments, path, cache_dir, config)
+    results = compute_clusters(
+        activities,
+        segments,
+        path,
+        cache_dir,
+        preloaded_coords,
+        config,
+    )
 
     # Raw SQL so the batch UPDATE and fingerprint INSERT commit atomically
     with cache_db.open_db(cache_dir) as db:

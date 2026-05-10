@@ -206,7 +206,7 @@ def load_file_metrics(
     cache_dir: str | PathLike[str] | None,
     config: ActivitiesConfig,
     cache: dict[str, ActivityMetrics] | None = None,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, dict[tuple[str, None], pd.DataFrame | None]]:
     """Compute per-activity metrics, using a pre-loaded cache when provided.
 
     Cache misses are computed and written to the DB as each file is processed.
@@ -219,7 +219,10 @@ def load_file_metrics(
         cache: Activities cache keyed by filename, or ``None`` to skip caching.
 
     Returns:
-        Metrics DataFrame aligned to ``files.index``.
+        Tuple of:
+        - Metrics DataFrame aligned to ``files.index``.
+        - Preloaded coords dict keyed by ``(filename, None)`` for each cache
+          miss, ready to pass to ``routes.cluster_routes_cached``.
     """
     if cache is not None:
         rows = [
@@ -232,9 +235,9 @@ def load_file_metrics(
         ]
 
     misses = [f for f, r in zip(files, rows) if r is None]
+    miss_dfs = records.load_activity_records(misses, None, path, cache_dir)
 
     if misses:
-        miss_dfs = records.load_activity_records(misses, None, path, cache_dir)
         ctx = (
             cache_db.open_db(cache_dir)
             if cache_dir is not None
@@ -250,7 +253,12 @@ def load_file_metrics(
             r if r is not None else miss_map[f] for f, r in zip(files, rows)
         ]
 
-    return pd.DataFrame(rows, index=files.index)
+    preloaded_coords = {
+        (f, None): records.coords_from_records(df)
+        for f, df in zip(misses, miss_dfs)
+    }
+
+    return pd.DataFrame(rows, index=files.index), preloaded_coords
 
 
 def build_activity_columns(
@@ -281,7 +289,9 @@ def build_activity_columns(
     """
     cache = load_activities_cache(cache_dir) if cache_dir is not None else None
 
-    calcs = load_file_metrics(csv["Filename"], path, cache_dir, config, cache)
+    calcs, preloaded_coords = load_file_metrics(
+        csv["Filename"], path, cache_dir, config, cache
+    )
 
     calcs["trainer"] = (csv["Activity Type"] == "Virtual Ride") | (
         ~calcs["has_location"] & ~csv["Filename"].isna()
@@ -303,6 +313,7 @@ def build_activity_columns(
         path,
         cache_dir,
         "activities",
+        preloaded_coords,
         config.clustering,
     )
     return calcs, clusters
