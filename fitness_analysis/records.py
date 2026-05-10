@@ -3,7 +3,7 @@
 import itertools
 import shutil
 from collections.abc import Iterable, Iterator
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from os import PathLike
 from pathlib import Path
 
@@ -12,8 +12,14 @@ import pandas as pd
 
 RECORDS_CACHE_DIR = "activity_records"
 
-# Minimum cold files to justify ProcessPoolExecutor startup overhead.
-PARALLEL_MIN_FILES = 30
+# Minimum files to justify pool startup overhead, for both ProcessPoolExecutor
+# and ThreadPoolExecutor call sites. Benchmarked on Apple M1 Pro; crossover was
+# 20-30 files for both pools.
+POOL_MIN_FILES = 30
+
+# Optimal worker count for threaded parquet reads. Benchmarked on Apple M1 Pro;
+# gains erode beyond 4, likely due to SSD contention and thread switching.
+THREAD_POOL_WORKERS = 4
 
 # Global parser shared across the fitness_analysis module
 parser = activity_parser.ActivityParser()
@@ -237,7 +243,9 @@ def warm_records_cache(
     if not cold_args:
         return
 
-    if len(cold_args) >= PARALLEL_MIN_FILES:
+    # fitdecode is pure Python logic, so a process pool is needed to benefit
+    # from parallelism here.
+    if len(cold_args) >= POOL_MIN_FILES:
         with ProcessPoolExecutor() as ex:
             list(ex.map(_parse_record_cached_packed, cold_args))
     else:
@@ -310,11 +318,13 @@ def load_activity_records(
         with ProcessPoolExecutor() as ex:
             return list(ex.map(_parse_record_cached_packed, args))
 
-    # Pass 1: pool cold whole-file parquets
     warm_records_cache(files, segments, path, cache_dir)
 
-    # Pass 2: read all from parquet serially
-    return [parse_record_cached(*a) for a in args]
+    if len(args) >= POOL_MIN_FILES:
+        with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS) as ex:
+            return list(ex.map(_parse_record_cached_packed, args))
+    else:
+        return [parse_record_cached(*a) for a in args]
 
 
 def load_activity_coords(
@@ -344,8 +354,10 @@ def load_activity_coords(
         with ProcessPoolExecutor() as ex:
             return list(ex.map(_parse_coords_cached_packed, args))
 
-    # Pass 1: pool cold whole-file parquets
     warm_records_cache(files, segments, path, cache_dir)
 
-    # Pass 2: read all from parquet serially
-    return [parse_coords_cached(*a) for a in args]
+    if len(args) >= POOL_MIN_FILES:
+        with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS) as ex:
+            return list(ex.map(_parse_coords_cached_packed, args))
+    else:
+        return [parse_coords_cached(*a) for a in args]
