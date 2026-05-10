@@ -1,10 +1,9 @@
 """Functions for processing Strava bicycling commutes."""
 
+import contextlib
 import dataclasses
 from collections.abc import Callable, Iterable
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from functools import partial
 from os import PathLike
 
 import numpy as np
@@ -247,15 +246,15 @@ def segment_metrics(
 
 def parse_commute_file(
     activity: pd.Series,
-    path: str | PathLike[str],
+    activity_records: pd.DataFrame,
     config: CommuteConfig,
     cache_dir: str | PathLike[str] | None = None,
     db: sqlite_utils.Database | None = None,
 ) -> list[CommuteMetrics]:
     """Calculate summary metrics for one commute activity.
 
-    Loads the activity file, filters out long inactive periods, splits on gaps
-    greater than ``config.delta``, and returns metrics for each split.
+    Filters out long inactive periods, splits on gaps greater than
+    ``config.delta``, and returns metrics for each split.
 
     When ``cache_dir`` is set and the file produces multiple splits, each
     split's records are written to the parquet cache. When ``db`` is provided,
@@ -263,7 +262,7 @@ def parse_commute_file(
 
     Args:
         activity: Activity row from the Strava CSV.
-        path: Strava export directory.
+        activity_records: Parsed records DataFrame for the activity.
         config: Configuration parameters.
         cache_dir: Optional cache directory for parsed activity records.
         db: Optional open database.
@@ -271,10 +270,6 @@ def parse_commute_file(
     Returns:
         List of ``CommuteMetrics``, one per commute split.
     """
-    activity_records = records.parse_record_cached(
-        activity["Filename"], None, path, cache_dir
-    )
-
     # Drop periods of inactivity, to cover the cases where the GPS was left
     # on all day rather than being paused between commute segments
     if "distance" in activity_records.columns:
@@ -367,30 +362,30 @@ def load_commute_splits(
     """
     files = file_commutes["Filename"]
 
-    if cache is None:
-        rows = list(file_commutes.iterrows())
-        fn = partial(parse_commute_file, path=path, config=config)
-        with ProcessPoolExecutor() as ex:
-            splits_list = list(ex.map(fn, (activity for _, activity in rows)))
-        return {
-            activity["Filename"]: splits
-            for (_, activity), splits in zip(rows, splits_list)
-        }
+    if cache is not None:
+        splits = {f: cache.get(f) for f in files}
+    else:
+        splits = {f: None for f in files}
 
-    splits = {f: cache.get(f) for f in files}
     misses = [f for f, r in splits.items() if r is None]
 
     if not misses:
         return splits
 
-    records.warm_records_cache(misses, None, path, cache_dir)
+    miss_dfs = records.load_activity_records(misses, None, path, cache_dir)
+    miss_df_map = dict(zip(misses, miss_dfs))
+    miss_rows = file_commutes[file_commutes["Filename"].isin(set(misses))]
 
-    miss_rows = file_commutes[file_commutes["Filename"].isin(misses)]
-
-    with cache_db.open_db(cache_dir) as db:
+    ctx = (
+        cache_db.open_db(cache_dir)
+        if cache_dir is not None
+        else contextlib.nullcontext()
+    )
+    with ctx as db:
         for _, activity in miss_rows.iterrows():
-            splits[activity["Filename"]] = parse_commute_file(
-                activity, path, config, cache_dir, db
+            fn = activity["Filename"]
+            splits[fn] = parse_commute_file(
+                activity, miss_df_map[fn], config, cache_dir, db
             )
 
     return splits

@@ -1,10 +1,9 @@
 """Functions for processing Strava bicycling activities."""
 
+import contextlib
 import dataclasses
 from collections.abc import Callable, Iterable
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from functools import partial
 from os import PathLike
 from pathlib import Path
 
@@ -151,28 +150,22 @@ def invalidate_activities_cache(
 
 def parse_activity_file(
     filename: str | float,
-    path: str | PathLike[str],
+    activity_records: pd.DataFrame,
     config: ActivitiesConfig,
-    cache_dir: str | PathLike[str] | None = None,
     db: sqlite_utils.Database | None = None,
 ) -> ActivityMetrics:
-    """Parse a single activity file and compute metrics.
+    """Compute metrics from a pre-loaded activity records DataFrame.
 
     Args:
         filename: Activity filename, or NaN for activities without a file.
-        path: Strava export directory.
+        activity_records: Parsed records DataFrame for the activity.
         config: Activities configuration.
-        cache_dir: Optional directory for the records parquet cache.
         db: Optional open database. When provided, the computed metrics are
             inserted into the cache as each file is parsed.
 
     Returns:
         Computed metrics for the activity.
     """
-    activity_records = records.parse_record_cached(
-        filename, None, path, cache_dir
-    )
-
     timezone = utils.infer_timezone(activity_records)
     has_location = timezone is not None
 
@@ -216,7 +209,7 @@ def load_file_metrics(
 ) -> pd.DataFrame:
     """Compute per-activity metrics, using a pre-loaded cache when provided.
 
-    Cache misses are computed and written to the DB as each file is parsed.
+    Cache misses are computed and written to the DB as each file is processed.
 
     Args:
         files: Activity filenames aligned to the CSV index.
@@ -228,29 +221,29 @@ def load_file_metrics(
     Returns:
         Metrics DataFrame aligned to ``files.index``.
     """
-    if cache is None:
-        with ProcessPoolExecutor() as ex:
-            results = list(
-                ex.map(
-                    partial(parse_activity_file, path=path, config=config),
-                    files,
-                )
-            )
-        return pd.DataFrame(results, index=files.index)
+    if cache is not None:
+        rows = [
+            ActivityMetrics(filename=f) if pd.isna(f) else cache.get(f)
+            for f in files
+        ]
+    else:
+        rows = [
+            ActivityMetrics(filename=f) if pd.isna(f) else None for f in files
+        ]
 
-    rows = [
-        ActivityMetrics(filename=f) if pd.isna(f) else cache.get(f)
-        for f in files
-    ]
     misses = [f for f, r in zip(files, rows) if r is None]
 
     if misses:
-        records.warm_records_cache(misses, None, path, cache_dir)
-
-        with cache_db.open_db(cache_dir) as db:
+        miss_dfs = records.load_activity_records(misses, None, path, cache_dir)
+        ctx = (
+            cache_db.open_db(cache_dir)
+            if cache_dir is not None
+            else contextlib.nullcontext()
+        )
+        with ctx as db:
             miss_map = {
-                f: parse_activity_file(f, path, config, cache_dir, db)
-                for f in misses
+                f: parse_activity_file(f, df, config, db)
+                for f, df in zip(misses, miss_dfs)
             }
 
         rows = [
