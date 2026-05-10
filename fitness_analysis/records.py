@@ -9,6 +9,8 @@ from pathlib import Path
 
 import activity_parser
 import pandas as pd
+import pyarrow
+import pyarrow.parquet
 
 RECORDS_CACHE_DIR = "activity_records"
 
@@ -83,7 +85,8 @@ def cache_record(
     obj_cols = records_df.select_dtypes(include="object").columns
     coerced = records_df.astype({col: "string" for col in obj_cols})
 
-    coerced.to_parquet(path)
+    table = pyarrow.Table.from_pandas(coerced, nthreads=1)
+    pyarrow.parquet.write_table(table, path)
 
 
 # ---------------------------------------------------------------------------
