@@ -2,6 +2,7 @@
 
 import contextlib
 import dataclasses
+import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from os import PathLike
@@ -21,6 +22,9 @@ class ActivitiesConfig:
     """Configuration parameters for ``load_strava_activities``.
 
     Attributes:
+        power_curve_max_s: Upper bound window size in seconds for power curves.
+        power_curve_density: Logspace samples per decade for power curve
+            windows.
         ftp_window_s: Rolling window in seconds for FTP estimation from power
             data.
         ftp_factor: Fraction of the rolling-window mean power used as the FTP
@@ -31,6 +35,8 @@ class ActivitiesConfig:
             ``cluster_name`` columns are not added to returned activities.
     """
 
+    power_curve_max_s: int = 12 * 3600
+    power_curve_density: int = 50
     ftp_window_s: int = 20 * 60
     ftp_factor: float = 0.95
     weekly_anchor: str = "W-SUN"
@@ -59,6 +65,8 @@ class ActivityMetrics:
     timezone: str | None = None
     has_location: bool = False
     max_heart_rate: float | None = None
+    power_windows: np.ndarray | None = None
+    power_curve: np.ndarray | None = None
     estimated_ftp: float | None = None
 
     def __post_init__(self) -> None:
@@ -75,13 +83,31 @@ class ActivityMetrics:
             "timezone": self.timezone,
             "has_location": int(self.has_location),
             "max_heart_rate": self.max_heart_rate,
+            "power_windows": (
+                json.dumps(self.power_windows.tolist())
+                if self.power_windows is not None
+                else None
+            ),
+            "power_curve": (
+                json.dumps(self.power_curve.tolist())
+                if self.power_curve is not None
+                else None
+            ),
             "estimated_ftp": self.estimated_ftp,
         }
 
     @classmethod
     def from_db_dict(cls, row: dict) -> ActivityMetrics:
         """Construct from a ``db["activities"].rows_where()`` row dict."""
-        return cls(**{f.name: row[f.name] for f in dataclasses.fields(cls)})
+        excluded = {"power_windows", "power_curve"}
+        field_names = {f.name for f in dataclasses.fields(cls)} - excluded
+        obj = cls(**{name: row.get(name) for name in field_names})
+
+        if row.get("power_windows") is not None:
+            obj.power_windows = np.array(json.loads(row["power_windows"]))
+            obj.power_curve = np.array(json.loads(row["power_curve"]))
+
+        return obj
 
 
 # ---------------------------------------------------------------------------
@@ -174,23 +200,38 @@ def parse_activity_file(
     else:
         max_hr = np.nan
 
+    power_windows_arr = None
+    power_curve_arr = None
+    estimated_ftp = np.nan
+
     if "power" in activity_records.columns:
-        estimated_ftp = (
-            activity_records["power"]
-            .resample("s")
-            .ffill()
-            .rolling(config.ftp_window_s)
-            .mean()
-            .max()
-        ) * config.ftp_factor
-    else:
-        estimated_ftp = np.nan
+        power_windows_arr = utils.power_curve_windows(
+            config.power_curve_max_s, config.power_curve_density
+        )
+        power_curve_arr = utils.compute_power_curve(
+            activity_records["power"], power_windows_arr
+        )
+        if power_curve_arr is not None:
+            valid = ~np.isnan(power_curve_arr)
+            power_curve_arr = power_curve_arr[valid]
+            power_windows_arr = power_windows_arr[valid]
+            estimated_ftp = (
+                np.interp(
+                    config.ftp_window_s, power_windows_arr, power_curve_arr
+                )
+                * config.ftp_factor
+            )
+        else:
+            # No power curve, so no windows to pair with
+            power_windows_arr = None
 
     result = ActivityMetrics(
         filename=filename,
         timezone=timezone,
         has_location=has_location,
         max_heart_rate=max_hr,
+        power_windows=power_windows_arr,
+        power_curve=power_curve_arr,
         estimated_ftp=estimated_ftp,
     )
 
@@ -415,3 +456,45 @@ def load_strava_activities(
     )
 
     return activities, weekly_sums
+
+
+def load_power_curves(
+    path: str | PathLike[str],
+    home_tz: Callable[[pd.Series], pd.Series | str] | str,
+    cache_dir: str | PathLike[str] | None = None,
+    config: ActivitiesConfig | None = None,
+) -> pd.DataFrame:
+    """Load power curves for all activities, computing and caching as needed.
+
+    Args:
+        path: Strava export directory.
+        home_tz: Fallback timezone for activities without GPS location data.
+            Either a fixed timezone string or a callable that accepts a Series
+            and returns per-activity timezone values.
+        cache_dir: Optional cache directory. If None, curves are computed on
+            every call without caching.
+        config: Activities configuration. Defaults to ``ActivitiesConfig()``.
+
+    Returns:
+        DataFrame indexed by local activity date with timedelta columns for
+        each window duration. Activities without power data are omitted.
+    """
+    if config is None:
+        config = ActivitiesConfig()
+
+    csv = load_strava_activities_raw(path)
+    calcs, _ = build_activity_columns(csv, path, home_tz, cache_dir, config)
+
+    rows_dict = {}
+    for local_date, metrics in zip(calcs["local_date"], calcs.itertuples()):
+        if metrics.power_windows is None:
+            continue
+        rows_dict[local_date] = pd.Series(
+            metrics.power_curve,
+            index=pd.to_timedelta(metrics.power_windows, unit="s"),
+        )
+
+    if not rows_dict:
+        return pd.DataFrame()
+
+    return pd.DataFrame(rows_dict).T

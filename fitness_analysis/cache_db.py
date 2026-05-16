@@ -94,6 +94,8 @@ def ensure_tables(db: sqlite_utils.Database) -> None:
             timezone       TEXT,
             has_location   INTEGER,
             max_heart_rate REAL,
+            power_windows  TEXT,
+            power_curve    TEXT,
             estimated_ftp  REAL,
             cluster_id     REAL,
             cluster_name   TEXT,

@@ -187,6 +187,62 @@ def identify_inactive_periods(
 
 
 # ---------------------------------------------------------------------------
+# Power curve computation
+# ---------------------------------------------------------------------------
+
+
+def power_curve_windows(max_s: int, density: int) -> np.ndarray:
+    """Logarithmically-spaced integer window sizes.
+
+    Args:
+        max_s: Upper bound window size in seconds.
+        density: Logspace samples per decade before deduplication.
+
+    Returns:
+        Approximately logarithmically-spaced 1-D array of window sizes in
+        seconds, from 1 to ``max_s``, rounded to integers.
+    """
+    n = round(density * np.log10(max_s))
+    return pd.unique(np.round(np.logspace(0, np.log10(max_s), n)).astype(int))
+
+
+def compute_power_curve(
+    power_series: pd.Series, windows: np.ndarray
+) -> np.ndarray | None:
+    """Calculate max mean power (W) for each window size.
+
+    Args:
+        power_series: Power values with a DatetimeIndex. NaN entries are
+            dropped before resampling.
+        windows: Integer window sizes in seconds, as from
+            ``power_curve_windows``.
+
+    Returns:
+        1-D array of max mean power (W) aligned to ``windows``, or ``None`` if
+        there is no usable power data.
+    """
+    # Ensure 1-second sampled power data with no NaN entries
+    power_arr = (
+        power_series.dropna().resample("s").ffill().to_numpy(dtype=np.float64)
+    )
+    if len(power_arr) == 0:
+        return None
+
+    # Re-use a single cumsum for each window computation:
+    # cumsum[n+window] - cumsum[n] = window sum at n,
+    # dividing max by window gives best mean power
+    results = np.empty(len(windows))
+    cumsum = np.concatenate(([0.0], np.cumsum(power_arr)))
+    for i, window in enumerate(windows):
+        if window > len(power_arr):
+            results[i] = np.nan
+        else:
+            results[i] = (cumsum[window:] - cumsum[:-window]).max() / window
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Changepoint detection
 # ---------------------------------------------------------------------------
 

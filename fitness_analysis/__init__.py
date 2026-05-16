@@ -27,6 +27,7 @@ from .routes import RouteClusterConfig, cluster_routes
 from .strava import (
     ActivitiesConfig,
     invalidate_activities_cache,
+    load_power_curves,
     load_strava_activities,
 )
 
@@ -42,6 +43,7 @@ __all__ = [
     "geocode_positions",
     "invalidate_activities_cache",
     "invalidate_commutes_cache",
+    "load_power_curves",
     "invalidate_geocode_cache",
     "invalidate_mnd_cache",
     "invalidate_records_cache",
