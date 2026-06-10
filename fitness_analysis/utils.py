@@ -221,9 +221,13 @@ def compute_power_curve(
         1-D array of max mean power (W) aligned to ``windows``, or ``None`` if
         there is no usable power data.
     """
-    # Ensure 1-second sampled power data with no NaN entries
+    # Resample to a regular 1-second grid, treating gaps as coasting at 0 W
     power_arr = (
-        power_series.dropna().resample("s").ffill().to_numpy(dtype=np.float64)
+        power_series.dropna()
+        .resample("s")
+        .mean()
+        .fillna(0.0)
+        .to_numpy(dtype=np.float64)
     )
     if len(power_arr) == 0:
         return None
