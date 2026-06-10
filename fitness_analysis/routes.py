@@ -760,10 +760,12 @@ def cluster_routes_cached(
 
         if stored_fp == expected_fp:
             fns = list({k[0] for k in keys if k is not None})
-            assert fns, "cache hit with no file-based activities"
-
             marks = ",".join("?" * len(fns))
-            rows = list(db[table].rows_where(f"filename IN ({marks})", fns))
+            rows = (
+                db[table].rows_where(f"filename IN ({marks})", fns)
+                if fns
+                else []
+            )
             lookup = {
                 (r["filename"], r["segment"]): ClusterResult.from_db_dict(r)
                 for r in rows
