@@ -175,17 +175,13 @@ def invalidate_commutes_cache(
         if files is None:
             with db.conn:
                 db["commutes"].drop()
-                db["cluster_fingerprints"].delete_where(
-                    "table_name = ?", ["commutes"]
-                )
+                cache_db.delete_fingerprint(db, "commutes")
         else:
             with db.conn:
                 db["commutes"].delete_where(
                     f"filename IN ({marks})", files_list
                 )
-                db["cluster_fingerprints"].delete_where(
-                    "table_name = ?", ["commutes"]
-                )
+                cache_db.delete_fingerprint(db, "commutes")
 
 
 # ---------------------------------------------------------------------------

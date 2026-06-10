@@ -154,9 +154,7 @@ def invalidate_activities_cache(
         if files is None:
             with db.conn:
                 db["activities"].drop()
-                db["cluster_fingerprints"].delete_where(
-                    "table_name = ?", ["activities"]
-                )
+                cache_db.delete_fingerprint(db, "activities")
         else:
             files_list = list(files)
             marks = ",".join("?" * len(files_list))
@@ -164,9 +162,7 @@ def invalidate_activities_cache(
                 db["activities"].delete_where(
                     f"filename IN ({marks})", files_list
                 )
-                db["cluster_fingerprints"].delete_where(
-                    "table_name = ?", ["activities"]
-                )
+                cache_db.delete_fingerprint(db, "activities")
 
 
 # ---------------------------------------------------------------------------

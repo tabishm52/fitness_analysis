@@ -113,11 +113,11 @@ def invalidate_geocode_cache(
         if provider is None:
             with db.conn:
                 db["geocode_cache"].drop()
-                db["cluster_fingerprints"].delete_where()
+                cache_db.delete_fingerprint(db)
         else:
             with db.conn:
                 db["geocode_cache"].delete_where("provider = ?", [provider])
-                db["cluster_fingerprints"].delete_where()
+                cache_db.delete_fingerprint(db)
 
 
 def seed_geocode_cache(

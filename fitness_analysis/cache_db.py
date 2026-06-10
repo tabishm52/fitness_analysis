@@ -138,3 +138,26 @@ def ensure_tables(db: sqlite_utils.Database) -> None:
             PRIMARY KEY (lat, lon)
         );
     """)
+
+
+# ---------------------------------------------------------------------------
+# Query helpers
+# ---------------------------------------------------------------------------
+
+
+def delete_fingerprint(
+    db: sqlite_utils.Database, table_name: str | None = None
+) -> None:
+    """Delete the cluster fingerprint for one table, or all when ``None``.
+
+    Call inside the caller's existing ``with db.conn:`` block so the deletion
+    commits atomically with the accompanying table mutation.
+
+    Args:
+        db: Open cache database.
+        table_name: Fingerprint to delete, or ``None`` for every table.
+    """
+    if table_name is None:
+        db["cluster_fingerprints"].delete_where()
+    else:
+        db["cluster_fingerprints"].delete_where("table_name = ?", [table_name])
