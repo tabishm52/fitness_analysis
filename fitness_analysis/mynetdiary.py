@@ -72,6 +72,15 @@ def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
     return merged_data
 
 
+def _read_cached_sheets(
+    cache_path: str | PathLike[str],
+) -> dict[str, pd.DataFrame]:
+    """Read all cached sheet parquets keyed by sheet name."""
+    return {
+        p.stem: pd.read_parquet(p) for p in Path(cache_path).glob("*.parquet")
+    }
+
+
 def merge_excel_files_cached(
     path: str | PathLike[str],
     cache_dir: str | PathLike[str],
@@ -80,7 +89,9 @@ def merge_excel_files_cached(
 
     The cache is invalidated whenever the set of Excel files or any of their
     modification times changes. On a cache hit all sheets are read from
-    parquet; on a miss the Excel files are read and the cache is written.
+    parquet; on a miss the Excel files are read and the cache is written. Both
+    paths return the parquet-read frames so the result is identical whether or
+    not the cache was warm.
 
     Args:
         path: Directory of Excel files.
@@ -104,9 +115,7 @@ def merge_excel_files_cached(
     stored = fingerprint_path.read_text() if fingerprint_path.exists() else None
     cached = stored == fingerprint
     if cached:
-        return {
-            p.stem: pd.read_parquet(p) for p in cache_path.glob("*.parquet")
-        }
+        return _read_cached_sheets(cache_path)
 
     data = merge_excel_files(path)
     cache_path.mkdir(parents=True, exist_ok=True)
@@ -118,7 +127,7 @@ def merge_excel_files_cached(
         )
     fingerprint_path.write_text(fingerprint)
 
-    return data
+    return _read_cached_sheets(cache_path)
 
 
 def invalidate_mnd_cache(cache_dir: str | PathLike[str]) -> None:
