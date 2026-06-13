@@ -23,26 +23,34 @@ from . import cache_db, geocoding, records, utils
 class RouteClusterConfig:
     """Configuration parameters for ``cluster_routes``.
 
+    Two routes cluster together when their Fréchet distance is below the affine
+    tolerance ``similarity_floor_m + similarity_slope * mean_length``. Routes
+    are resampled to a point count proportional to length (``points_per_km``,
+    clamped to ``[points_min, points_max]``); since Fréchet distance is O(n²) in
+    the point count, ``points_per_km`` should be kept relatively low.
+
     Attributes:
-        points_per_km: Number of resampled points per km of route length.
-        points_min: Minimum number of resampled points (short routes).
-        points_max: Maximum number of resampled points (long routes).
-        partition_eps_m: How close two routes' start (or end) points must
-            be to be considered the same origin (or destination), in metres.
-        similarity_eps: How similar two routes must be to be clustered
-            together, as a fraction of their mean length (e.g. 0.02 = 2%).
+        points_per_km: Resampled points per km of route length.
+        points_min: Minimum resampled points per route.
+        points_max: Maximum resampled points per route.
+        partition_eps_m: Max start/end separation, in metres, for two routes to
+            share an origin/destination.
+        similarity_floor_m: Constant similarity tolerance, in metres.
+        similarity_slope: Proportional similarity tolerance, as a fraction of
+            mean route length.
         min_samples: Minimum rides on a route for it to form a cluster.
-        length_ratio_max: Routes longer than this multiple of each other
-            are skipped without computing a full shape comparison.
-        geocoding: Geocoding parameters. If ``None``, ``start_address`` and
-            ``end_address`` will be absent from cluster results.
+        length_ratio_max: Routes longer than this multiple of each other are
+            skipped without a full shape comparison.
+        geocoding: Geocoding parameters, or ``None`` to omit ``start_address``
+            and ``end_address`` from cluster results.
     """
 
     points_per_km: float = 1.0
     points_min: int = 20
     points_max: int = 100
     partition_eps_m: float = 750.0
-    similarity_eps: float = 0.02
+    similarity_floor_m: float = 300.0
+    similarity_slope: float = 0.015
     min_samples: int = 2
     length_ratio_max: float = 1.2
     geocoding: geocoding.GeocodingConfig | None = dataclasses.field(
@@ -269,27 +277,37 @@ def frechet_pair(
     xy_b: np.ndarray,
     len_a: float,
     len_b: float,
+    similarity_floor_m: float,
+    similarity_slope: float,
     length_ratio_max: float,
 ) -> float:
-    """Compute normalised discrete Fréchet distance for one pair of routes.
+    """Compute discrete Fréchet distance for one pair, normalised by tolerance.
+
+    The raw Fréchet distance is divided by the affine tolerance
+    ``similarity_floor_m + similarity_slope * mean_length``, so a value below
+    ``1.0`` means the pair is within tolerance (i.e. the same route).
 
     Args:
         xy_a: Resampled UTM coordinates for route A, shape (n, 2).
         xy_b: Resampled UTM coordinates for route B, shape (m, 2).
         len_a: Arc length of route A in metres.
         len_b: Arc length of route B in metres.
+        similarity_floor_m: Constant tolerance in metres.
+        similarity_slope: Proportional tolerance, as a fraction of route length.
         length_ratio_max: Routes longer than this multiple of each other
             are skipped without computing a full shape comparison.
 
     Returns:
-        Fréchet distance normalised by the mean route length of the pair,
-        or ``inf`` if the length ratio pre-filter rejects the pair.
+        Raw Fréchet distance divided by the affine tolerance (``< 1.0`` means
+        within tolerance), or ``inf`` if the length ratio pre-filter rejects
+        the pair.
     """
     if len_a > len_b * length_ratio_max or len_b > len_a * length_ratio_max:
         return np.inf
 
     raw = frechet_distance(LineString(xy_a), LineString(xy_b))
-    return raw / ((len_a + len_b) / 2.0)
+    denom = similarity_floor_m + similarity_slope * (len_a + len_b) / 2.0
+    return raw / denom
 
 
 def route_pairs(
@@ -304,6 +322,8 @@ def route_pairs(
                 route_list[j][0],
                 route_list[i][1],
                 route_list[j][1],
+                config.similarity_floor_m,
+                config.similarity_slope,
                 config.length_ratio_max,
             )
 
@@ -339,9 +359,10 @@ def cluster_partition(
     # a sentinel larger than any eps.
     safe = np.nan_to_num(distance_matrix, copy=True, posinf=1e9)
 
+    # Distances are pre-normalised by the affine tolerance in frechet_pair
     return DBSCAN(
         metric="precomputed",
-        eps=config.similarity_eps,
+        eps=1.0,
         min_samples=config.min_samples,
     ).fit_predict(safe)
 
