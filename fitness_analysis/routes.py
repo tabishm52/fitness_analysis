@@ -49,8 +49,8 @@ class RouteClusterConfig:
     points_min: int = 20
     points_max: int = 100
     partition_eps_m: float = 750.0
-    similarity_floor_m: float = 350.0
-    similarity_slope: float = 0.012
+    similarity_floor_m: float = 50.0
+    similarity_slope: float = 0.018
     min_samples: int = 2
     length_ratio_max: float = 1.2
     geocoding: geocoding.GeocodingConfig | None = dataclasses.field(
