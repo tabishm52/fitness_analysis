@@ -148,6 +148,8 @@ def invalidate_commutes_cache(
         return
 
     with cache_db.open_db(cache_dir) as db:
+        files_list = list(files) if files is not None else []
+        marks = ",".join("?" * len(files_list))
         if files is None:
             rows = list(
                 db["commutes"].rows_where(
@@ -155,8 +157,6 @@ def invalidate_commutes_cache(
                 )
             )
         else:
-            files_list = list(files)
-            marks = ",".join("?" * len(files_list))
             rows = list(
                 db["commutes"].rows_where(
                     f"filename IN ({marks}) AND segment != -1",
