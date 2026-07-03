@@ -223,7 +223,8 @@ def segment_metrics(
             config.stopped_speed / 3600.0,
             config.min_stop_duration,
         )
-        moving_time_s = float((~inactive_periods).sum())
+        dt_s = group.index.to_series().diff().dt.total_seconds().fillna(0.0)
+        moving_time_s = float(dt_s[~inactive_periods].sum())
     else:
         distance = None
         moving_time_s = None
