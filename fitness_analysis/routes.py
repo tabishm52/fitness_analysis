@@ -809,14 +809,20 @@ def cluster_routes_cached(
     # Raw SQL so the batch UPDATE and fingerprint INSERT commit atomically
     with cache_db.open_db(cache_dir) as db:
         with db.conn:
-            db.conn.executemany(
-                ClusterResult.update_sql(table),
-                [
-                    cr.to_update_params(k[0], k[1])
-                    for cr, k in zip(results, keys)
-                    if k is not None
-                ],
+            params = [
+                cr.to_update_params(k[0], k[1])
+                for cr, k in zip(results, keys)
+                if k is not None
+            ]
+            cursor = db.conn.executemany(
+                ClusterResult.update_sql(table), params
             )
+            if cursor.rowcount != len(params):
+                raise RuntimeError(
+                    f"Cluster cache UPDATE on {table!r} matched "
+                    f"{cursor.rowcount} of {len(params)} rows; rows must "
+                    "exist in the DB before cluster_routes_cached is called."
+                )
             db.conn.execute(
                 "INSERT OR REPLACE INTO cluster_fingerprints"
                 " (table_name, fingerprint) VALUES (?, ?)",
