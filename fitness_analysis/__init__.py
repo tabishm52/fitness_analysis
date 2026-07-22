@@ -18,6 +18,13 @@ from .mynetdiary import (
     invalidate_mnd_cache,
     load_mnd_data,
 )
+from .piecewise_fit import (
+    invalidate_piecewise_fit_cache,
+    piecewise_fit,
+    piecewise_fit_auto,
+    piecewise_fit_cached,
+    piecewise_fit_with_breaks,
+)
 from .records import (
     invalidate_records_cache,
     load_activity_coords,
@@ -46,11 +53,16 @@ __all__ = [
     "load_power_curves",
     "invalidate_geocode_cache",
     "invalidate_mnd_cache",
+    "invalidate_piecewise_fit_cache",
     "invalidate_records_cache",
     "load_activity_coords",
     "load_activity_records",
     "load_commute_activities",
     "load_mnd_data",
     "load_strava_activities",
+    "piecewise_fit",
+    "piecewise_fit_auto",
+    "piecewise_fit_cached",
+    "piecewise_fit_with_breaks",
     "seed_geocode_cache",
 ]
