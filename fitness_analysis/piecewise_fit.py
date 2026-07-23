@@ -55,6 +55,10 @@ def _fit_n_segments(
 ) -> tuple[np.ndarray, float] | None:
     """Fit `model` with `n_segs` segments respecting the minimum segment length.
 
+    Bypasses pwlf's breakpoint search and runs our own `differential_evolution`
+    over a reparameterized space (see `_min_gap_breaks`) where every point it
+    can evaluate respects `min_segment_s`.
+
     Returns ``(breaks_s, ssr)``, or ``None`` if `n_segs` segments can't fit in
     the series span given `min_segment_s`.
     """
@@ -65,7 +69,7 @@ def _fit_n_segments(
         breaks_s = np.array([x_lo, x_hi])
         return breaks_s, model.fit_with_breaks_opt(np.array([]))
 
-    model.use_custom_opt(n_segs)
+    model.use_custom_opt(n_segs)  # Opt out of pwlf's own DE search
 
     def objective(u: np.ndarray) -> float:
         interior = _min_gap_breaks(u, x_lo, min_segment_s)
@@ -100,7 +104,7 @@ def piecewise_fit(
     series: pd.Series,
     n_segments: int,
     units: str,
-    min_segment_duration: pd.Timedelta | None = None,
+    min_segment_duration: pd.Timedelta = pd.Timedelta(0),
 ) -> pd.DataFrame:
     """Fit a piecewise linear regression on a time series.
 
@@ -108,8 +112,8 @@ def piecewise_fit(
         series: Time-indexed values. NaN entries are dropped before fitting.
         n_segments: Number of segments for piecewise regression.
         units: Timedelta unit string for slope (e.g. 'D' per day, 'W' per week).
-        min_segment_duration: Minimum duration enforced on every segment.
-            ``None`` disables the floor.
+        min_segment_duration: Minimum duration enforced on every segment during
+            the search. Defaults to no floor.
 
     Returns:
         Time-indexed breakpoints with ``value`` and ``rate`` columns.
@@ -117,11 +121,7 @@ def piecewise_fit(
     """
     clean, t0, x_s, s_per_unit = _to_seconds(series, units)
     x_lo, x_hi = x_s[0], x_s[-1]
-    min_segment_s = (
-        min_segment_duration.total_seconds()
-        if min_segment_duration is not None
-        else 0.0
-    )
+    min_segment_s = min_segment_duration.total_seconds()
 
     model = pwlf.PiecewiseLinFit(x_s, clean.values)
     candidate = _fit_n_segments(model, x_lo, x_hi, n_segments, min_segment_s)
@@ -159,7 +159,7 @@ def piecewise_fit_auto(
     series: pd.Series,
     units: str,
     max_segments: int = 6,
-    min_segment_duration: pd.Timedelta | None = None,
+    min_segment_duration: pd.Timedelta = pd.Timedelta(0),
 ) -> pd.DataFrame:
     """Fit a piecewise linear regression with BIC-selected segment count.
 
@@ -168,7 +168,7 @@ def piecewise_fit_auto(
         units: Timedelta unit string for slope (e.g. 'D' per day, 'W' per week).
         max_segments: Upper bound on the candidate segment count.
         min_segment_duration: Minimum duration enforced on every segment during
-            the search. ``None`` disables the floor.
+            the search. Defaults to no floor.
 
     Returns:
         Time-indexed breakpoints with ``value`` and ``rate`` columns.
@@ -179,11 +179,7 @@ def piecewise_fit_auto(
     clean, t0, x_s, s_per_unit = _to_seconds(series, units)
     n = len(x_s)
     x_lo, x_hi = x_s[0], x_s[-1]
-    min_segment_s = (
-        min_segment_duration.total_seconds()
-        if min_segment_duration is not None
-        else 0.0
-    )
+    min_segment_s = min_segment_duration.total_seconds()
 
     model = pwlf.PiecewiseLinFit(x_s, clean.values)
     best_bic = float("inf")
@@ -212,7 +208,7 @@ def piecewise_fit_cached(
     series: pd.Series,
     units: str,
     max_segments: int = 6,
-    min_segment_duration: pd.Timedelta | None = None,
+    min_segment_duration: pd.Timedelta = pd.Timedelta(0),
     cache_dir: Path | None = None,
     max_cached: int = 30,
 ) -> pd.DataFrame:
@@ -225,7 +221,8 @@ def piecewise_fit_cached(
         series: Time-indexed values. NaN entries are dropped before fitting.
         units: Timedelta unit string for slope (e.g. 'D' per day, 'W' per week).
         max_segments: Upper bound on the candidate segment count.
-        min_segment_duration: Minimum duration for any segment.
+        min_segment_duration: Minimum duration enforced on every segment during
+            the search. Defaults to no floor.
         cache_dir: Directory for caching the result. Pass ``None`` to skip
             caching and fit directly.
         max_cached: Maximum number of cached results to retain; least recently
