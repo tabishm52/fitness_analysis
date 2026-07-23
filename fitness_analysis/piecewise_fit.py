@@ -11,6 +11,22 @@ from scipy.optimize import differential_evolution
 
 PIECEWISE_CACHE_DIR = "piecewise_fit"
 
+# Mirrors pwlf.PiecewiseLinFit.fit()'s own DE tuning (from pwlf 2.5.2) since
+# scipy's DE defaults converge to a measurably worse optimum on real data.
+# Seed is fixed so a cache miss recomputes identically.
+_DE_KWARGS = dict(
+    strategy="best1bin",
+    maxiter=1000,
+    popsize=50,
+    tol=1e-3,
+    mutation=(0.5, 1),
+    recombination=0.7,
+    seed=0,
+    polish=True,
+    init="latinhypercube",
+    atol=1e-4,
+)
+
 
 def _to_seconds(
     series: pd.Series, units: str
@@ -58,7 +74,7 @@ def _fit_n_segments(
     # Each free var searches slack in [0, slack]; _min_gap_breaks turns that
     # into ordered breakpoints that always respect the floor
     result = differential_evolution(
-        objective, bounds=[(0, slack)] * (n_segs - 1)
+        objective, bounds=[(0, slack)] * (n_segs - 1), **_DE_KWARGS
     )
     interior = _min_gap_breaks(result.x, x_lo, min_segment_s)
     breaks_s = np.concatenate(([x_lo], interior, [x_hi]))
