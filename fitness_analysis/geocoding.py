@@ -53,13 +53,13 @@ class GeocodingProvider:
         google_api_key = os.getenv(google_api_key_env)
         if google_api_key:
             return cls(
-                geocoders.GoogleV3(api_key=google_api_key),
+                geocoders.GoogleV3(api_key=google_api_key, timeout=3),
                 min_delay_seconds=0.04,
                 name="google",
             )
 
         return cls(
-            geocoders.Nominatim(user_agent="fitness-analysis"),
+            geocoders.Nominatim(user_agent="fitness-analysis", timeout=3),
             min_delay_seconds=1,
             name="nominatim",
         )
