@@ -12,9 +12,9 @@ import sqlite_utils
 DB_FILE = "fitness_cache.db"
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Value coercion
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def to_sql(v: Any) -> Any:
@@ -41,8 +41,8 @@ def segment_to_db(seg: int | None) -> int:
 def cache_key(fn: str | float, seg: int | None) -> tuple[str, int] | None:
     """Build a ``(filename, segment)`` DB primary key.
 
-    Uses -1 as a sentinel for whole-file (None) segments so keys are hashable
-    and map directly to the ``segment`` column in both DB tables.
+    Uses -1 as a sentinel for whole-file (None) segments so keys are hashable and map
+    directly to the ``segment`` column in both DB tables.
 
     Args:
         fn: Activity filename, or NaN for fileless activities.
@@ -57,9 +57,9 @@ def cache_key(fn: str | float, seg: int | None) -> tuple[str, int] | None:
     return (fn, segment_to_db(seg))
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Connection management
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def db_path(cache_dir: str | PathLike[str]) -> Path:
@@ -142,18 +142,16 @@ def ensure_tables(db: sqlite_utils.Database) -> None:
     """)
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Query helpers
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
-def delete_fingerprint(
-    db: sqlite_utils.Database, table_name: str | None = None
-) -> None:
+def delete_fingerprint(db: sqlite_utils.Database, table_name: str | None = None) -> None:
     """Delete the cluster fingerprint for one table, or all when ``None``.
 
-    Call inside the caller's existing ``with db.conn:`` block so the deletion
-    commits atomically with the accompanying table mutation.
+    Call inside the caller's existing ``with db.conn:`` block so the deletion commits
+    atomically with the accompanying table mutation.
 
     Args:
         db: Open cache database.

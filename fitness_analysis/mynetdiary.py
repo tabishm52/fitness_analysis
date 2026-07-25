@@ -32,17 +32,17 @@ class MndTuning:
     rate_window_days: int = 28
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Excel loading and cache
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
     """Loads and merges data from all Excel files in a directory.
 
-    Loads all sheets of all [xls,xlsx] files in a directory and merges them into
-    one mapping keyed by sheet name. Identically named sheets from each Excel
-    file are concatenated in alphabetical order of Excel file name.
+    Loads all sheets of all [xls,xlsx] files in a directory and merges them into one
+    mapping keyed by sheet name. Identically named sheets from each Excel file are
+    concatenated in alphabetical order of Excel file name.
 
     Args:
         path: Directory of Excel files.
@@ -51,9 +51,7 @@ def merge_excel_files(path: str | PathLike[str]) -> dict[str, pd.DataFrame]:
         A mapping of merged sheet data keyed by sheet name.
     """
     data_parts: dict[str, list[pd.DataFrame]] = {}
-    excel_files = sorted(
-        f for f in Path(path).iterdir() if f.suffix.lower() in {".xls", ".xlsx"}
-    )
+    excel_files = sorted(f for f in Path(path).iterdir() if f.suffix.lower() in {".xls", ".xlsx"})
 
     for f in excel_files:
         excel = pd.read_excel(f, sheet_name=None)
@@ -76,9 +74,7 @@ def _read_cached_sheets(
     cache_path: str | PathLike[str],
 ) -> dict[str, pd.DataFrame]:
     """Read all cached sheet parquets keyed by sheet name."""
-    return {
-        p.stem: pd.read_parquet(p) for p in Path(cache_path).glob("*.parquet")
-    }
+    return {p.stem: pd.read_parquet(p) for p in Path(cache_path).glob("*.parquet")}
 
 
 def merge_excel_files_cached(
@@ -88,10 +84,9 @@ def merge_excel_files_cached(
     """Load and merge Excel files, using a parquet cache when available.
 
     The cache is invalidated whenever the set of Excel files or any of their
-    modification times changes. On a cache hit all sheets are read from
-    parquet; on a miss the Excel files are read and the cache is written. Both
-    paths return the parquet-read frames so the result is identical whether or
-    not the cache was warm.
+    modification times changes. On a cache hit all sheets are read from parquet; on a
+    miss the Excel files are read and the cache is written. Both paths return the
+    parquet-read frames so the result is identical whether or not the cache was warm.
 
     Args:
         path: Directory of Excel files.
@@ -100,13 +95,9 @@ def merge_excel_files_cached(
     Returns:
         A mapping of merged sheet data keyed by sheet name.
     """
-    excel_files = sorted(
-        f for f in Path(path).iterdir() if f.suffix.lower() in {".xls", ".xlsx"}
-    )
+    excel_files = sorted(f for f in Path(path).iterdir() if f.suffix.lower() in {".xls", ".xlsx"})
     fingerprint = hashlib.md5(
-        json.dumps(
-            sorted((f.name, f.stat().st_mtime) for f in excel_files)
-        ).encode()
+        json.dumps(sorted((f.name, f.stat().st_mtime) for f in excel_files)).encode()
     ).hexdigest()
 
     cache_path = Path(cache_dir) / MND_CACHE_DIR
@@ -133,8 +124,8 @@ def merge_excel_files_cached(
 def invalidate_mnd_cache(cache_dir: str | PathLike[str]) -> None:
     """Invalidate the MyNetDiary parquet cache.
 
-    Deletes the cache directory, forcing a full Excel re-read on the next
-    call to ``load_mnd_data``.
+    Deletes the cache directory, forcing a full Excel re-read on the next call to
+    ``load_mnd_data``.
 
     Args:
         cache_dir: Cache directory passed to ``load_mnd_data``.
@@ -144,9 +135,9 @@ def invalidate_mnd_cache(cache_dir: str | PathLike[str]) -> None:
         shutil.rmtree(cache_path)
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Estimated energy requirements
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def eer_male(
@@ -199,9 +190,9 @@ def eer_female(
     return 354 - 6.91 * age + pa * (4.25 * weight + 18.44 * height)
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Top-level entry point
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def load_mnd_data(
@@ -214,8 +205,8 @@ def load_mnd_data(
 
     Args:
         path: MyNetDiary export directory.
-        eer_func: Callable that wraps eer_male or eer_female with height
-            and dob fields specified by caller.
+        eer_func: Callable that wraps eer_male or eer_female with height and dob fields
+            specified by caller.
         cache_dir: Optional cache directory for the parquet cache.
         tuning: Optional tuning parameters. Defaults to ``MndTuning()``.
 
@@ -278,17 +269,11 @@ def load_mnd_data(
     # Construct a table of calorie information
     calories = pd.DataFrame()
     calories["food"] = (
-        mnd_data["Food"]
-        .resample("D", on="Date & Time")["Calories, cals"]
-        .sum(min_count=1)
+        mnd_data["Food"].resample("D", on="Date & Time")["Calories, cals"].sum(min_count=1)
     )
-    calories["exercise"] = (
-        mnd_data["Exercise"].resample("D", on="Date & Time")["Calories"].sum()
-    )
+    calories["exercise"] = mnd_data["Exercise"].resample("D", on="Date & Time")["Calories"].sum()
     calories["exercise"] = calories["exercise"].fillna(0)
-    calories["baseline"] = eer_func(
-        weight["smoothed"].reindex(calories.index, method="ffill")
-    )
+    calories["baseline"] = eer_func(weight["smoothed"].reindex(calories.index, method="ffill"))
     calories.index.rename("date", inplace=True)
 
     # Impute unlogged days with the rolling average of logged days
@@ -311,15 +296,12 @@ def load_mnd_data(
     ).mean()
 
     # Convert observed weight gain/loss in lbs/week to calories/day.
-    calories["net_observed"] = (
-        utils.CAL_PER_LB_WEEK
-        * utils.rolling_linear_rate(
-            weight["actual"],
-            accuracy_window_days,
-            accuracy_min_periods,
-            "W",
-            center=False,
-        )
+    calories["net_observed"] = utils.CAL_PER_LB_WEEK * utils.rolling_linear_rate(
+        weight["actual"],
+        accuracy_window_days,
+        accuracy_min_periods,
+        "W",
+        center=False,
     )
 
     # Calculate "accuracy" of calorie counting relative to actual weight loss
@@ -337,9 +319,7 @@ def load_mnd_data(
         )
         .mean()
     )
-    avg_consumption_observed = (
-        calories["baseline"] + avg_exercise + calories["net_observed"]
-    )
+    avg_consumption_observed = calories["baseline"] + avg_exercise + calories["net_observed"]
     calories["accuracy"] = avg_food_recorded / avg_consumption_observed
 
     return weight, calories

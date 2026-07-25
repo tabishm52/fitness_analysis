@@ -14,22 +14,22 @@ import pyarrow.parquet
 
 RECORDS_CACHE_DIR = "activity_records"
 
-# Minimum files to justify pool startup overhead, for both ProcessPoolExecutor
-# and ThreadPoolExecutor call sites. Benchmarked on Apple M1 Pro; crossover was
-# 20-30 files for both pools.
+# Minimum files to justify pool startup overhead, for both ProcessPoolExecutor and
+# ThreadPoolExecutor call sites. Benchmarked on Apple M1 Pro; crossover was 20-30 files
+# for both pools.
 POOL_MIN_FILES = 30
 
-# Optimal worker count for threaded parquet reads. Benchmarked on Apple M1 Pro;
-# gains erode beyond 4, likely due to SSD contention and thread switching.
+# Optimal worker count for threaded parquet reads. Benchmarked on Apple M1 Pro; gains
+# erode beyond 4, likely due to SSD contention and thread switching.
 THREAD_POOL_WORKERS = 4
 
 # Global parser shared across the fitness_analysis module
 parser = activity_parser.ActivityParser()
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Parquet cache helpers
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def parquet_path(
@@ -39,10 +39,10 @@ def parquet_path(
 ) -> Path:
     """Return the parquet cache path for an activity file or segment.
 
-    Strips any trailing ``.gz`` wrapper so the parquet name always ends with
-    the underlying format extension (e.g. ``.fit.parquet``). When ``segment``
-    is given, inserts ``-{segment}`` before the extension to produce a unique
-    path for each segment of a multi-segment activity.
+    Strips any trailing ``.gz`` wrapper so the parquet name always ends with the
+    underlying format extension (e.g. ``.fit.parquet``). When ``segment`` is given,
+    inserts ``-{segment}`` before the extension to produce a unique path for each
+    segment of a multi-segment activity.
 
     Args:
         filename: Activity filename (relative path or bare name).
@@ -89,9 +89,9 @@ def cache_record(
     pyarrow.parquet.write_table(table, path)
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Single file parsing
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def parse_record_cached(
@@ -104,8 +104,8 @@ def parse_record_cached(
 
     Worker-safe: picklable and suitable for use inside multiprocessing pools.
 
-    Activity files are assumed immutable after Strava export. To invalidate,
-    use ``invalidate_records_cache``.
+    Activity files are assumed immutable after Strava export. To invalidate, use
+    ``invalidate_records_cache``.
 
     Args:
         filename: Activity filename (relative to ``path``).
@@ -153,8 +153,7 @@ def coords_from_records(df: pd.DataFrame) -> pd.DataFrame | None:
         df: Parsed records DataFrame.
 
     Returns:
-        Trimmed ``latitude``/``longitude`` data, or ``None`` if GPS data are
-        absent.
+        Trimmed ``latitude``/``longitude`` data, or ``None`` if GPS data are absent.
     """
     if "latitude" not in df.columns:
         return None
@@ -185,16 +184,15 @@ def parse_coords_cached(
         cache_dir: Optional cache directory.
 
     Returns:
-        Trimmed ``latitude``/``longitude`` data, or ``None`` if GPS data are
-        absent.
+        Trimmed ``latitude``/``longitude`` data, or ``None`` if GPS data are absent.
     """
     records = parse_record_cached(filename, segment, path, cache_dir)
     return coords_from_records(records)
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Batch helpers
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def _record_args(
@@ -205,8 +203,8 @@ def _record_args(
 ) -> Iterator[tuple]:
     """Yield ``(filename, segment, path, cache_dir)`` tuples for a batch.
 
-    When ``segments`` is ``None``, every file is treated as a whole-file
-    activity (``segment=None``).
+    When ``segments`` is ``None``, every file is treated as a whole-file activity
+    (``segment=None``).
     """
     segs = segments if segments is not None else itertools.repeat(None)
     for f, seg in zip(files, segs):
@@ -224,9 +222,9 @@ def _parse_coords_cached_packed(args: tuple) -> pd.DataFrame | None:
     return parse_coords_cached(*args)
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Batch operations
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def warm_records_cache(
@@ -237,29 +235,28 @@ def warm_records_cache(
 ) -> None:
     """Ensure parquet files exist for all given activity files.
 
-    Identifies whole-file (``segment=None``) entries without a parquet cache
-    and parses them, pooling workers when there are enough cold files to
-    justify the overhead. Segment entries (``segment`` is not ``None``) are
-    skipped — their parquets must be written explicitly via ``cache_record``.
+    Identifies whole-file (``segment=None``) entries without a parquet cache and parses
+    them, pooling workers when there are enough cold files to justify the overhead.
+    Segment entries (``segment`` is not ``None``) are skipped — their parquets must be
+    written explicitly via ``cache_record``.
 
     Args:
         files: Activity filenames (relative to ``path``).
-        segments: Per-file segment indices, or ``None`` to treat all files as
-            whole-file activities.
+        segments: Per-file segment indices, or ``None`` to treat all files as whole-file
+            activities.
         path: Directory containing the activity files.
         cache_dir: Cache directory containing the parquet subdirectory.
     """
     cold_args = [
         args
         for args in _record_args(files, segments, path, cache_dir)
-        if args[1] is None
-        and not parquet_path(args[0], None, cache_dir).exists()
+        if args[1] is None and not parquet_path(args[0], None, cache_dir).exists()
     ]
     if not cold_args:
         return
 
-    # fitdecode is pure Python logic, so a process pool is needed to benefit
-    # from parallelism here.
+    # fitdecode is pure Python logic, so a process pool is needed to benefit from
+    # parallelism here.
     if len(cold_args) >= POOL_MIN_FILES:
         with ProcessPoolExecutor() as ex:
             list(ex.map(_parse_record_cached_packed, cold_args))
@@ -275,15 +272,15 @@ def invalidate_records_cache(
 ) -> None:
     """Invalidate the records (parquet) cache.
 
-    If ``files`` is ``None``, deletes the entire cache directory. Otherwise
-    removes only the parquet files for the given activity filenames and their
-    corresponding segment indices.
+    If ``files`` is ``None``, deletes the entire cache directory. Otherwise removes only
+    the parquet files for the given activity filenames and their corresponding segment
+    indices.
 
     Args:
-        files: Activity filenames whose parquet files should be removed.
-            If ``None``, the entire records cache is cleared.
-        segments: Per-file segment indices, or ``None`` to treat all files as
-            whole-file activities.
+        files: Activity filenames whose parquet files should be removed. If ``None``,
+            the entire records cache is cleared.
+        segments: Per-file segment indices, or ``None`` to treat all files as whole-file
+            activities.
         cache_dir: Cache directory passed to ``load_activity_records`` or
             ``load_strava_activities``.
     """
@@ -302,9 +299,9 @@ def invalidate_records_cache(
             p.unlink()
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Top-level entry points
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def load_activity_records(
@@ -319,8 +316,8 @@ def load_activity_records(
 
     Args:
         files: Activity filenames (relative to ``path``).
-        segments: Per-file segment indices, or ``None`` to treat all files as
-            whole-file activities.
+        segments: Per-file segment indices, or ``None`` to treat all files as whole-file
+            activities.
         path: Directory containing the activity files.
         cache_dir: Optional cache directory.
 
@@ -354,14 +351,14 @@ def load_activity_coords(
 
     Args:
         files: Activity filenames (relative to ``path``).
-        segments: Per-file segment indices, or ``None`` to treat all files as
-            whole-file activities.
+        segments: Per-file segment indices, or ``None`` to treat all files as whole-file
+            activities.
         path: Directory containing the activity files.
         cache_dir: Optional cache directory.
 
     Returns:
-        Trimmed ``latitude``/``longitude`` data, one per file, in the same
-        order as ``files``. ``None`` for files with no GPS data.
+        Trimmed ``latitude``/``longitude`` data, one per file, in the same order as
+        ``files``. ``None`` for files with no GPS data.
     """
     args = list(_record_args(files, segments, path, cache_dir))
 

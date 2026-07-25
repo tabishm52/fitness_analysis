@@ -23,14 +23,12 @@ class ActivitiesConfig:
 
     Attributes:
         power_curve_max_s: Upper bound window size in seconds for power curves.
-        power_curve_density: Logspace samples per decade for power curve
-            windows.
-        ftp_window_s: Rolling window in seconds for FTP estimation from power
-            data.
-        ftp_factor: Fraction of the rolling-window mean power used as the FTP
-            estimate. The standard 20-minute protocol uses 0.95.
-        weekly_anchor: Pandas offset alias for weekly resampling. ``'W-SUN'``
-            matches Strava's weekly metrics.
+        power_curve_density: Logspace samples per decade for power curve windows.
+        ftp_window_s: Rolling window in seconds for FTP estimation from power data.
+        ftp_factor: Fraction of the rolling-window mean power used as the FTP estimate.
+            The standard 20-minute protocol uses 0.95.
+        weekly_anchor: Pandas offset alias for weekly resampling. ``'W-SUN'`` matches
+            Strava's weekly metrics.
         clustering: Route clustering parameters. If None, ``cluster_id`` and
             ``cluster_name`` columns are not added to returned activities.
     """
@@ -84,14 +82,10 @@ class ActivityMetrics:
             "has_location": int(self.has_location),
             "max_heart_rate": self.max_heart_rate,
             "power_windows": (
-                json.dumps(self.power_windows.tolist())
-                if self.power_windows is not None
-                else None
+                json.dumps(self.power_windows.tolist()) if self.power_windows is not None else None
             ),
             "power_curve": (
-                json.dumps(self.power_curve.tolist())
-                if self.power_curve is not None
-                else None
+                json.dumps(self.power_curve.tolist()) if self.power_curve is not None else None
             ),
             "estimated_ftp": self.estimated_ftp,
         }
@@ -110,9 +104,9 @@ class ActivityMetrics:
         return obj
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Cache management
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def load_activities_cache(
@@ -127,10 +121,7 @@ def load_activities_cache(
         Dict mapping each activity filename to its cached metrics.
     """
     with cache_db.open_db(cache_dir) as db:
-        return {
-            row["filename"]: ActivityMetrics.from_db_dict(row)
-            for row in db["activities"].rows
-        }
+        return {row["filename"]: ActivityMetrics.from_db_dict(row) for row in db["activities"].rows}
 
 
 def invalidate_activities_cache(
@@ -139,12 +130,11 @@ def invalidate_activities_cache(
 ) -> None:
     """Invalidate the activities cache.
 
-    If ``files`` is None, deletes the entire cache file. Otherwise removes
-    only the entries for the given activity filenames, leaving the rest intact.
+    If ``files`` is None, deletes the entire cache file. Otherwise removes only the
+    entries for the given activity filenames, leaving the rest intact.
 
     Args:
-        files: Activity filenames to remove. If None, the whole cache is
-            cleared.
+        files: Activity filenames to remove. If None, the whole cache is cleared.
         cache_dir: Cache directory passed to ``load_strava_activities``.
     """
     if not cache_db.db_path(cache_dir).exists():
@@ -159,15 +149,13 @@ def invalidate_activities_cache(
             files_list = list(files)
             marks = ",".join("?" * len(files_list))
             with db.conn:
-                db["activities"].delete_where(
-                    f"filename IN ({marks})", files_list
-                )
+                db["activities"].delete_where(f"filename IN ({marks})", files_list)
                 cache_db.delete_fingerprint(db, "activities")
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Activity processing
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def parse_activity_file(
@@ -182,8 +170,8 @@ def parse_activity_file(
         filename: Activity filename, or NaN for activities without a file.
         activity_records: Parsed records DataFrame for the activity.
         config: Activities configuration.
-        db: Optional open database. When provided, the computed metrics are
-            inserted into the cache as each file is parsed.
+        db: Optional open database. When provided, the computed metrics are inserted
+            into the cache as each file is parsed.
 
     Returns:
         Computed metrics for the activity.
@@ -204,17 +192,13 @@ def parse_activity_file(
         power_windows_arr = utils.power_curve_windows(
             config.power_curve_max_s, config.power_curve_density
         )
-        power_curve_arr = utils.compute_power_curve(
-            activity_records["power"], power_windows_arr
-        )
+        power_curve_arr = utils.compute_power_curve(activity_records["power"], power_windows_arr)
         if power_curve_arr is not None:
             valid = ~np.isnan(power_curve_arr)
             power_curve_arr = power_curve_arr[valid]
             power_windows_arr = power_windows_arr[valid]
             estimated_ftp = (
-                np.interp(
-                    config.ftp_window_s, power_windows_arr, power_curve_arr
-                )
+                np.interp(config.ftp_window_s, power_windows_arr, power_curve_arr)
                 * config.ftp_factor
             )
         else:
@@ -258,41 +242,28 @@ def load_file_metrics(
     Returns:
         Tuple of:
         - Metrics DataFrame aligned to ``files.index``.
-        - Preloaded coords dict keyed by ``(filename, None)`` for each cache
-          miss, ready to pass to ``routes.cluster_routes_cached``.
+        - Preloaded coords dict keyed by ``(filename, None)`` for each cache miss, ready
+          to pass to ``routes.cluster_routes_cached``.
     """
     if cache is not None:
-        rows = [
-            ActivityMetrics(filename=f) if pd.isna(f) else cache.get(f)
-            for f in files
-        ]
+        rows = [ActivityMetrics(filename=f) if pd.isna(f) else cache.get(f) for f in files]
     else:
-        rows = [
-            ActivityMetrics(filename=f) if pd.isna(f) else None for f in files
-        ]
+        rows = [ActivityMetrics(filename=f) if pd.isna(f) else None for f in files]
 
     misses = [f for f, r in zip(files, rows) if r is None]
     miss_dfs = records.load_activity_records(misses, None, path, cache_dir)
 
     if misses:
-        ctx = (
-            cache_db.open_db(cache_dir)
-            if cache_dir is not None
-            else contextlib.nullcontext()
-        )
+        ctx = cache_db.open_db(cache_dir) if cache_dir is not None else contextlib.nullcontext()
         with ctx as db:
             miss_map = {
-                f: parse_activity_file(f, df, config, db)
-                for f, df in zip(misses, miss_dfs)
+                f: parse_activity_file(f, df, config, db) for f, df in zip(misses, miss_dfs)
             }
 
-        rows = [
-            r if r is not None else miss_map[f] for f, r in zip(files, rows)
-        ]
+        rows = [r if r is not None else miss_map[f] for f, r in zip(files, rows)]
 
     preloaded_coords = {
-        (f, None): records.coords_from_records(df)
-        for f, df in zip(misses, miss_dfs)
+        (f, None): records.coords_from_records(df) for f, df in zip(misses, miss_dfs)
     }
 
     return pd.DataFrame(rows, index=files.index), preloaded_coords
@@ -307,9 +278,9 @@ def build_activity_columns(
 ) -> tuple[pd.DataFrame, pd.DataFrame | None]:
     """Compute all derived per-activity columns with a cache lookup.
 
-    Reads the activities cache, computes file metrics (timezone, heart rate,
-    FTP), infers trainer status, and calculates local dates. Cache misses are
-    written to the DB as each file is parsed. Optionally runs route clustering.
+    Reads the activities cache, computes file metrics (timezone, heart rate, FTP),
+    infers trainer status, and calculates local dates. Cache misses are written to the
+    DB as each file is parsed. Optionally runs route clustering.
 
     Args:
         csv: Raw Strava CSV indexed by UTC activity date.
@@ -321,14 +292,12 @@ def build_activity_columns(
     Returns:
         Tuple of:
         - ``calcs``: Computed columns aligned to the index of ``csv``.
-        - ``clusters``: Cluster assignments including position columns, or
-          ``None`` when clustering is disabled.
+        - ``clusters``: Cluster assignments including position columns, or ``None`` when
+          clustering is disabled.
     """
     cache = load_activities_cache(cache_dir) if cache_dir is not None else None
 
-    calcs, preloaded_coords = load_file_metrics(
-        csv["Filename"], path, cache_dir, config, cache
-    )
+    calcs, preloaded_coords = load_file_metrics(csv["Filename"], path, cache_dir, config, cache)
 
     calcs["trainer"] = (csv["Activity Type"] == "Virtual Ride") | (
         ~calcs["has_location"] & ~csv["Filename"].isna()
@@ -356,9 +325,9 @@ def build_activity_columns(
     return calcs, clusters
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Data loading
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def load_strava_activities_raw(
@@ -366,8 +335,8 @@ def load_strava_activities_raw(
 ) -> pd.DataFrame:
     """Load raw bicycling activity data from a Strava export CSV.
 
-    Reads ``ACTIVITIES_FNAME`` and filters to Ride and Virtual Ride activities
-    without computing any additional metrics from the underlying activity files.
+    Reads ``ACTIVITIES_FNAME`` and filters to Ride and Virtual Ride activities without
+    computing any additional metrics from the underlying activity files.
 
     Args:
         path: Strava export directory.
@@ -378,15 +347,13 @@ def load_strava_activities_raw(
     csv = pd.read_csv(Path(path) / ACTIVITIES_FNAME).query(
         '`Activity Type` in ["Ride", "Virtual Ride"]'
     )
-    csv["Activity Date"] = pd.to_datetime(
-        csv["Activity Date"], format="%b %d, %Y, %I:%M:%S %p"
-    )
+    csv["Activity Date"] = pd.to_datetime(csv["Activity Date"], format="%b %d, %Y, %I:%M:%S %p")
     return csv.set_index("Activity Date")
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Top-level entry point
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def load_strava_activities(
@@ -397,18 +364,18 @@ def load_strava_activities(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load bicycling activity data from a Strava export directory.
 
-    Reads ``ACTIVITIES_FNAME``, filters to Ride and Virtual Ride activities,
-    and computes additional per-activity metrics (timezone, max heart rate,
-    estimated FTP) from the underlying activity files. Results are cached so
-    that subsequent calls are fast even for large exports.
+    Reads ``ACTIVITIES_FNAME``, filters to Ride and Virtual Ride activities, and
+    computes additional per-activity metrics (timezone, max heart rate, estimated FTP)
+    from the underlying activity files. Results are cached so that subsequent calls are
+    fast even for large exports.
 
     Args:
         path: Strava export directory.
-        home_tz: Fallback timezone for activities without GPS location data
-            (e.g. trainer rides). Either a fixed timezone string or a callable
-            that accepts a Series and returns per-activity timezone values.
-        cache_dir: Optional directory for cached results. If omitted, activity
-            files are parsed on every call.
+        home_tz: Fallback timezone for activities without GPS location data (e.g.
+            trainer rides). Either a fixed timezone string or a callable that accepts a
+            Series and returns per-activity timezone values.
+        cache_dir: Optional directory for cached results. If omitted, activity files are
+            parsed on every call.
         config: Optional configuration. Defaults to ``ActivitiesConfig()``.
 
     Returns:
@@ -420,9 +387,7 @@ def load_strava_activities(
         config = ActivitiesConfig()
 
     csv = load_strava_activities_raw(path)
-    calcs, clusters = build_activity_columns(
-        csv, path, home_tz, cache_dir, config
-    )
+    calcs, clusters = build_activity_columns(csv, path, home_tz, cache_dir, config)
 
     df = pd.DataFrame()
     df["date"] = calcs["local_date"]
@@ -447,9 +412,7 @@ def load_strava_activities(
     activities = df.set_index("date").sort_index()
 
     weekly_metrics = ["distance", "elevation", "elapsed_time", "moving_time"]
-    weekly_sums = (
-        activities[weekly_metrics].resample(config.weekly_anchor).sum()
-    )
+    weekly_sums = activities[weekly_metrics].resample(config.weekly_anchor).sum()
 
     return activities, weekly_sums
 
@@ -464,16 +427,16 @@ def load_power_curves(
 
     Args:
         path: Strava export directory.
-        home_tz: Fallback timezone for activities without GPS location data.
-            Either a fixed timezone string or a callable that accepts a Series
-            and returns per-activity timezone values.
-        cache_dir: Optional cache directory. If None, curves are computed on
-            every call without caching.
+        home_tz: Fallback timezone for activities without GPS location data. Either a
+            fixed timezone string or a callable that accepts a Series and returns
+            per-activity timezone values.
+        cache_dir: Optional cache directory. If None, curves are computed on every call
+            without caching.
         config: Activities configuration. Defaults to ``ActivitiesConfig()``.
 
     Returns:
-        DataFrame indexed by local activity date with timedelta columns for
-        each window duration. Activities without power data are omitted.
+        DataFrame indexed by local activity date with timedelta columns for each window
+        duration. Activities without power data are omitted.
     """
     if config is None:
         config = ActivitiesConfig()

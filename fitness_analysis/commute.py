@@ -19,17 +19,16 @@ class CommuteConfig:
 
     Attributes:
         delta: Time gap at which to split round-trip activities.
-        inactive_speed: Speed (km/hr) below which GPS is considered left on
-            between commute segments.
-        stopped_speed: Speed (km/hr) below which the rider is considered
-            stopped for moving time calculation.
+        inactive_speed: Speed (km/hr) below which GPS is considered left on between
+            commute segments.
+        stopped_speed: Speed (km/hr) below which the rider is considered stopped for
+            moving time calculation.
         min_stop_duration: Minimum stop duration to exclude from moving time.
-        morning_cutoff_hour: Hour (0-23) before which a commute is classified
-            as morning; at or after which it is classified as afternoon.
+        morning_cutoff_hour: Hour (0-23) before which a commute is classified as
+            morning; at or after which it is classified as afternoon.
         clustering: Route clustering parameters. If None, ``cluster_id``,
             ``cluster_name``, and span columns are not added to the output.
-        span_penalty: Changepoint detection penalty. Higher values produce
-            fewer spans.
+        span_penalty: Changepoint detection penalty. Higher values produce fewer spans.
         span_min_size: Minimum number of commutes per span.
     """
 
@@ -103,9 +102,9 @@ class CommuteMetrics:
         )
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Cache management
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def load_commutes_cache(
@@ -134,14 +133,12 @@ def invalidate_commutes_cache(
 ) -> None:
     """Invalidate the commutes cache.
 
-    If ``files`` is None, clears the entire commutes table and deletes any
-    segment parquets for multi-segment activities. Otherwise removes only the
-    entries for the given activity filenames, deleting their segment parquets
-    as well.
+    If ``files`` is None, clears the entire commutes table and deletes any segment
+    parquets for multi-segment activities. Otherwise removes only the entries for the
+    given activity filenames, deleting their segment parquets as well.
 
     Args:
-        files: Activity filenames to remove. If None, the whole cache is
-            cleared.
+        files: Activity filenames to remove. If None, the whole cache is cleared.
         cache_dir: Cache directory passed to ``load_commute_activities``.
     """
     if not cache_db.db_path(cache_dir).exists():
@@ -151,11 +148,7 @@ def invalidate_commutes_cache(
         files_list = list(files) if files is not None else []
         marks = ",".join("?" * len(files_list))
         if files is None:
-            rows = list(
-                db["commutes"].rows_where(
-                    "segment != -1", select="filename, segment"
-                )
-            )
+            rows = list(db["commutes"].rows_where("segment != -1", select="filename, segment"))
         else:
             rows = list(
                 db["commutes"].rows_where(
@@ -178,15 +171,13 @@ def invalidate_commutes_cache(
                 cache_db.delete_fingerprint(db, "commutes")
         else:
             with db.conn:
-                db["commutes"].delete_where(
-                    f"filename IN ({marks})", files_list
-                )
+                db["commutes"].delete_where(f"filename IN ({marks})", files_list)
                 cache_db.delete_fingerprint(db, "commutes")
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Activity processing
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def segment_metrics(
@@ -200,8 +191,7 @@ def segment_metrics(
     Args:
         activity: Activity row from the Strava CSV.
         group: Activity records for this segment.
-        seg_idx: 1-based segment index, or ``None`` for single-segment
-            activities.
+        seg_idx: 1-based segment index, or ``None`` for single-segment activities.
         config: Configuration parameters.
 
     Returns:
@@ -210,9 +200,7 @@ def segment_metrics(
     timezone = utils.infer_timezone(group)
     ts = group.index[0]
     date = (ts.tz_convert(timezone) if timezone else ts).tz_localize(None)
-    direction = (
-        "Morning" if date.hour < config.morning_cutoff_hour else "Afternoon"
-    )
+    direction = "Morning" if date.hour < config.morning_cutoff_hour else "Afternoon"
     elapsed_time_s = (group.index[-1] - group.index[0]).total_seconds()
 
     if "distance" in group.columns:
@@ -253,12 +241,12 @@ def parse_commute_file(
 ]:
     """Calculate summary metrics for one commute activity.
 
-    Filters out long inactive periods, splits on gaps greater than
-    ``config.delta``, and returns metrics for each split.
+    Filters out long inactive periods, splits on gaps greater than ``config.delta``, and
+    returns metrics for each split.
 
-    When ``cache_dir`` is set and the file produces multiple splits, each
-    split's records are written to the parquet cache. When ``db`` is provided,
-    the computed splits are inserted into the cache as each file is parsed.
+    When ``cache_dir`` is set and the file produces multiple splits, each split's
+    records are written to the parquet cache. When ``db`` is provided, the computed
+    splits are inserted into the cache as each file is parsed.
 
     Args:
         activity: Activity row from the Strava CSV.
@@ -270,11 +258,11 @@ def parse_commute_file(
     Returns:
         Tuple of:
         - List of ``CommuteMetrics``, one per commute split.
-        - Preloaded coords dict keyed by ``(filename, segment)`` for each
-          split, ready to merge into the caller's preloaded_coords.
+        - Preloaded coords dict keyed by ``(filename, segment)`` for each split, ready
+          to merge into the caller's preloaded_coords.
     """
-    # Drop periods of inactivity, to cover the cases where the GPS was left
-    # on all day rather than being paused between commute segments
+    # Drop periods of inactivity, to cover the cases where the GPS was left on all day
+    # rather than being paused between commute segments
     if "distance" in activity_records.columns:
         inactive = utils.identify_inactive_periods(
             activity_records["distance"],
@@ -284,9 +272,7 @@ def parse_commute_file(
         active = (~inactive).reindex(activity_records.index).fillna(True)
         activity_records = activity_records[active]
 
-    group_ids = (
-        activity_records.index.to_series().diff() > config.delta
-    ).cumsum()
+    group_ids = (activity_records.index.to_series().diff() > config.delta).cumsum()
     groups = list(activity_records.groupby(group_ids, sort=False))
 
     results = []
@@ -330,9 +316,7 @@ def process_commute_csv(
         Computed metrics for the commute.
     """
     date = utc_date.tz_localize("UTC").tz_convert(tz).tz_localize(None)
-    direction = (
-        "Morning" if date.hour < config.morning_cutoff_hour else "Afternoon"
-    )
+    direction = "Morning" if date.hour < config.morning_cutoff_hour else "Afternoon"
 
     return CommuteMetrics(
         date=date,
@@ -369,8 +353,8 @@ def load_commute_splits(
     Returns:
         Tuple of:
         - Dict mapping each filename to its list of commute split metrics.
-        - Preloaded coords dict keyed by ``(filename, segment)`` for each
-          cache-miss split, ready to pass to ``routes.cluster_routes_cached``.
+        - Preloaded coords dict keyed by ``(filename, segment)`` for each cache-miss
+          split, ready to pass to ``routes.cluster_routes_cached``.
     """
     files = file_commutes["Filename"]
 
@@ -389,11 +373,7 @@ def load_commute_splits(
     miss_df_map = dict(zip(misses, miss_dfs))
     miss_rows = file_commutes[file_commutes["Filename"].isin(set(misses))]
 
-    ctx = (
-        cache_db.open_db(cache_dir)
-        if cache_dir is not None
-        else contextlib.nullcontext()
-    )
+    ctx = cache_db.open_db(cache_dir) if cache_dir is not None else contextlib.nullcontext()
     with ctx as db:
         for _, activity in miss_rows.iterrows():
             fn = activity["Filename"]
@@ -414,25 +394,24 @@ def build_commute_columns(
 ) -> tuple[pd.DataFrame, pd.DataFrame | None]:
     """Compute all derived per-commute columns with a cache lookup.
 
-    Reads the commutes cache, processes misses, and optionally runs route
-    clustering. Cache misses are written to the DB as each file is parsed.
+    Reads the commutes cache, processes misses, and optionally runs route clustering.
+    Cache misses are written to the DB as each file is parsed.
 
     Args:
         commutes: Commute activities from the Strava CSV.
         path: Strava export directory.
-        home_tz: Timezone for commutes without GPS location data. Either a
-            fixed timezone string or a callable that accepts a Series and
-            returns per-activity timezone values.
-        cache_dir: Optional cache directory. If ``None``, no caching is
-            performed.
+        home_tz: Timezone for commutes without GPS location data. Either a fixed
+            timezone string or a callable that accepts a Series and returns per-activity
+            timezone values.
+        cache_dir: Optional cache directory. If ``None``, no caching is performed.
         config: Configuration parameters.
 
     Returns:
         Tuple of:
-        - ``calcs``: One row per commute split, indexed by local split start
-          time, with cache-schema column names.
-        - ``clusters``: Full cluster assignments including position columns,
-          or ``None`` when clustering is disabled.
+        - ``calcs``: One row per commute split, indexed by local split start time, with
+          cache-schema column names.
+        - ``clusters``: Full cluster assignments including position columns, or ``None``
+          when clustering is disabled.
     """
     cache = load_commutes_cache(cache_dir) if cache_dir is not None else None
 
@@ -447,9 +426,7 @@ def build_commute_columns(
 
     # Keyed by UTC timestamp (no filename for CSV-only activities).
     csv_splits = {
-        utc_date: process_commute_csv(
-            activity, utc_date, tz_series.loc[utc_date], config
-        )
+        utc_date: process_commute_csv(activity, utc_date, tz_series.loc[utc_date], config)
         for utc_date, activity in csv_commutes.iterrows()
     }
 
@@ -491,9 +468,9 @@ def compute_spans(
 ) -> pd.DataFrame | None:
     """Detect commute spans and enrich them with counts and addresses.
 
-    Builds the home/work position signal from ``clusters``, runs PELT
-    changepoint detection, then adds ``n_commutes`` and (when geocoding is
-    enabled) ``home_address`` / ``work_address`` to each span row.
+    Builds the home/work position signal from ``clusters``, runs PELT changepoint
+    detection, then adds ``n_commutes`` and (when geocoding is enabled) ``home_address``
+    / ``work_address`` to each span row.
 
     Args:
         commutes_df: Commutes indexed by local date, must include ``direction``.
@@ -504,39 +481,24 @@ def compute_spans(
         Spans DataFrame with ``start_date``, ``end_date``, ``n_commutes``, and
         optionally ``home_address`` / ``work_address`` columns.
     """
-    geocoding_enabled = (
-        config.clustering is not None
-        and config.clustering.geocoding is not None
-    )
+    geocoding_enabled = config.clustering is not None and config.clustering.geocoding is not None
 
     is_morning = commutes_df["direction"] == "Morning"
     signal = pd.DataFrame(
         {
-            "home_lat": np.where(
-                is_morning, clusters["start_lat"], clusters["end_lat"]
-            ),
-            "home_lon": np.where(
-                is_morning, clusters["start_lon"], clusters["end_lon"]
-            ),
-            "work_lat": np.where(
-                is_morning, clusters["end_lat"], clusters["start_lat"]
-            ),
-            "work_lon": np.where(
-                is_morning, clusters["end_lon"], clusters["start_lon"]
-            ),
+            "home_lat": np.where(is_morning, clusters["start_lat"], clusters["end_lat"]),
+            "home_lon": np.where(is_morning, clusters["start_lon"], clusters["end_lon"]),
+            "work_lat": np.where(is_morning, clusters["end_lat"], clusters["start_lat"]),
+            "work_lon": np.where(is_morning, clusters["end_lon"], clusters["start_lon"]),
         },
         index=commutes_df.index,
     )
 
-    spans_df = utils.pelt_segments(
-        signal, config.span_penalty, config.span_min_size
-    )
+    spans_df = utils.pelt_segments(signal, config.span_penalty, config.span_min_size)
 
     rows = []
     for _, span in spans_df.iterrows():
-        in_span = (commutes_df.index >= span["start"]) & (
-            commutes_df.index <= span["end"]
-        )
+        in_span = (commutes_df.index >= span["start"]) & (commutes_df.index <= span["end"])
 
         row: dict = {
             "start_date": span["start"].normalize(),
@@ -561,21 +523,17 @@ def compute_spans(
                 ]
             ).dropna()
 
-            row["home_address"] = (
-                home_addrs.mode().iat[0] if len(home_addrs) else None
-            )
-            row["work_address"] = (
-                work_addrs.mode().iat[0] if len(work_addrs) else None
-            )
+            row["home_address"] = home_addrs.mode().iat[0] if len(home_addrs) else None
+            row["work_address"] = work_addrs.mode().iat[0] if len(work_addrs) else None
 
         rows.append(row)
 
     return pd.DataFrame(rows)
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 # Top-level entry point
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 
 def load_commute_activities(
@@ -586,26 +544,25 @@ def load_commute_activities(
 ) -> tuple[pd.DataFrame, pd.DataFrame | None]:
     """Calculate summary metrics for a set of commute activities.
 
-    Loads bicycling activities from a Strava export, filters to commutes,
-    and returns per-commute summary metrics. Activities recorded as a single
-    file are split on any gap greater than ``config.delta``, producing one
-    entry per segment.
+    Loads bicycling activities from a Strava export, filters to commutes, and returns
+    per-commute summary metrics. Activities recorded as a single file are split on any
+    gap greater than ``config.delta``, producing one entry per segment.
 
-    Activities without a FIT/GPX file are treated as simple one-way commutes,
-    deriving metrics from the Strava CSV fields and using ``home_tz`` to
-    determine the local date.
+    Activities without a FIT/GPX file are treated as simple one-way commutes, deriving
+    metrics from the Strava CSV fields and using ``home_tz`` to determine the local
+    date.
 
-    When clustering is enabled, changepoint detection is run to identify
-    periods of consistent commute endpoints. Each detected span represents a
-    contiguous block of commutes between the same home location and workplace.
+    When clustering is enabled, changepoint detection is run to identify periods of
+    consistent commute endpoints. Each detected span represents a contiguous block of
+    commutes between the same home location and workplace.
 
     Args:
         path: Strava export directory.
-        home_tz: Timezone for commutes without GPS location data. Either a
-            fixed timezone string or a callable that accepts a Series and
-            returns per-activity timezone values.
-        cache_dir: Optional directory for cached results. If omitted, activity
-            files are parsed on every call.
+        home_tz: Timezone for commutes without GPS location data. Either a fixed
+            timezone string or a callable that accepts a Series and returns per-activity
+            timezone values.
+        cache_dir: Optional directory for cached results. If omitted, activity files are
+            parsed on every call.
         config: Optional config parameters. Defaults to ``CommuteConfig()``.
 
     Returns:
@@ -618,9 +575,7 @@ def load_commute_activities(
 
     csv = strava.load_strava_activities_raw(path)
     commutes_csv = csv[csv["Commute"].fillna(False)]
-    calcs, clusters = build_commute_columns(
-        commutes_csv, path, home_tz, cache_dir, config
-    )
+    calcs, clusters = build_commute_columns(commutes_csv, path, home_tz, cache_dir, config)
 
     columns = [
         "description",
@@ -643,15 +598,13 @@ def load_commute_activities(
     base_df = calcs if clusters is None else calcs.join(clusters)
     commutes_df = base_df.assign(
         elapsed_time=lambda d: pd.to_timedelta(d["elapsed_time_s"], unit="s"),
-        moving_time=lambda d: pd.to_timedelta(
-            d["moving_time_s"].fillna(0), unit="s"
-        ).where(d["moving_time_s"].notna()),
+        moving_time=lambda d: pd.to_timedelta(d["moving_time_s"].fillna(0), unit="s").where(
+            d["moving_time_s"].notna()
+        ),
     )[columns]
 
     spans_df = (
-        compute_spans(commutes_df, clusters, config)
-        if config.clustering is not None
-        else None
+        compute_spans(commutes_df, clusters, config) if config.clustering is not None else None
     )
 
     return commutes_df.sort_index(), spans_df

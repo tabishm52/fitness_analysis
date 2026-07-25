@@ -11,9 +11,9 @@ from scipy.optimize import differential_evolution
 
 PIECEWISE_CACHE_DIR = "piecewise_fit"
 
-# Mirrors pwlf.PiecewiseLinFit.fit()'s own DE tuning (from pwlf 2.5.2) since
-# scipy's DE defaults converge to a measurably worse optimum on real data.
-# Seed is fixed so a cache miss recomputes identically.
+# Mirrors pwlf.PiecewiseLinFit.fit()'s own DE tuning (from pwlf 2.5.2) since scipy's DE
+# defaults converge to a measurably worse optimum on real data. Seed is fixed so a cache
+# miss recomputes identically.
 _DE_KWARGS = dict(
     strategy="best1bin",
     maxiter=1000,
@@ -28,9 +28,7 @@ _DE_KWARGS = dict(
 )
 
 
-def _to_seconds(
-    series: pd.Series, units: str
-) -> tuple[pd.Series, pd.Timestamp, np.ndarray, float]:
+def _to_seconds(series: pd.Series, units: str) -> tuple[pd.Series, pd.Timestamp, np.ndarray, float]:
     """Common setup shared by every piecewise fit entry point."""
     clean = series.dropna()
     t0 = clean.index[0]
@@ -55,12 +53,12 @@ def _fit_n_segments(
 ) -> tuple[np.ndarray, float] | None:
     """Fit `model` with `n_segs` segments respecting the minimum segment length.
 
-    Bypasses pwlf's breakpoint search and runs our own `differential_evolution`
-    over a reparameterized space (see `_min_gap_breaks`) where every point it
-    can evaluate respects `min_segment_s`.
+    Bypasses pwlf's breakpoint search and runs our own `differential_evolution` over a
+    reparameterized space (see `_min_gap_breaks`) where every point it can evaluate
+    respects `min_segment_s`.
 
-    Returns ``(breaks_s, ssr)``, or ``None`` if `n_segs` segments can't fit in
-    the series span given `min_segment_s`.
+    Returns ``(breaks_s, ssr)``, or ``None`` if `n_segs` segments can't fit in the
+    series span given `min_segment_s`.
     """
     slack = (x_hi - x_lo) - n_segs * min_segment_s  # Room beyond n_segs floors
     if slack < 0:
@@ -75,11 +73,9 @@ def _fit_n_segments(
         interior = _min_gap_breaks(u, x_lo, min_segment_s)
         return model.fit_with_breaks_opt(interior)
 
-    # Each free var searches slack in [0, slack]; _min_gap_breaks turns that
-    # into ordered breakpoints that always respect the floor
-    result = differential_evolution(
-        objective, bounds=[(0, slack)] * (n_segs - 1), **_DE_KWARGS
-    )
+    # Each free var searches slack in [0, slack]; _min_gap_breaks turns that into
+    # ordered breakpoints that always respect the floor
+    result = differential_evolution(objective, bounds=[(0, slack)] * (n_segs - 1), **_DE_KWARGS)
     interior = _min_gap_breaks(result.x, x_lo, min_segment_s)
     breaks_s = np.concatenate(([x_lo], interior, [x_hi]))
     return breaks_s, result.fun
@@ -112,12 +108,12 @@ def piecewise_fit(
         series: Time-indexed values. NaN entries are dropped before fitting.
         n_segments: Number of segments for piecewise regression.
         units: Timedelta unit string for slope (e.g. 'D' per day, 'W' per week).
-        min_segment_duration: Minimum duration enforced on every segment during
-            the search. Defaults to no floor.
+        min_segment_duration: Minimum duration enforced on every segment during the
+            search. Defaults to no floor.
 
     Returns:
-        Time-indexed breakpoints with ``value`` and ``rate`` columns.
-        The final row's ``rate`` is NaN (no outgoing segment).
+        Time-indexed breakpoints with ``value`` and ``rate`` columns. The final row's
+        ``rate`` is NaN (no outgoing segment).
     """
     clean, t0, x_s, s_per_unit = _to_seconds(series, units)
     x_lo, x_hi = x_s[0], x_s[-1]
@@ -146,8 +142,8 @@ def piecewise_fit_with_breaks(
         units: Timedelta unit string for slope (e.g. 'D' per day, 'W' per week).
 
     Returns:
-        Time-indexed breakpoints with ``value`` and ``rate`` columns.
-        The final row's ``rate`` is NaN (no outgoing segment).
+        Time-indexed breakpoints with ``value`` and ``rate`` columns. The final row's
+        ``rate`` is NaN (no outgoing segment).
     """
     clean, t0, x_s, s_per_unit = _to_seconds(series, units)
     breaks_s = (pd.DatetimeIndex(breaks) - t0).total_seconds().to_numpy()
@@ -167,12 +163,12 @@ def piecewise_fit_auto(
         series: Time-indexed values. NaN entries are dropped before fitting.
         units: Timedelta unit string for slope (e.g. 'D' per day, 'W' per week).
         max_segments: Upper bound on the candidate segment count.
-        min_segment_duration: Minimum duration enforced on every segment during
-            the search. Defaults to no floor.
+        min_segment_duration: Minimum duration enforced on every segment during the
+            search. Defaults to no floor.
 
     Returns:
-        Time-indexed breakpoints with ``value`` and ``rate`` columns.
-        The final row's ``rate`` is NaN (no outgoing segment).
+        Time-indexed breakpoints with ``value`` and ``rate`` columns. The final row's
+        ``rate`` is NaN (no outgoing segment).
     """
     assert max_segments >= 1
 
@@ -185,8 +181,8 @@ def piecewise_fit_auto(
     best_bic = float("inf")
     best_breaks_s = None
 
-    # Gaussian-likelihood BIC; Number of parameters k = n_segs slopes +
-    # 1 intercept + (n_segs-1) interior breakpoints + noise variance
+    # Gaussian-likelihood BIC; Number of parameters k = n_segs slopes + 1 intercept +
+    # (n_segs-1) interior breakpoints + noise variance
     for n_segs in range(1, max_segments + 1):
         candidate = _fit_n_segments(model, x_lo, x_hi, n_segs, min_segment_s)
         if candidate is None:
@@ -214,28 +210,26 @@ def piecewise_fit_cached(
 ) -> pd.DataFrame:
     """Disk-cached wrapper around ``piecewise_fit_auto``.
 
-    Keys the cache on the cleaned series and parameter arguments; a hit is
-    read back from parquet, a miss is computed and written.
+    Keys the cache on the cleaned series and parameter arguments; a hit is read back
+    from parquet, a miss is computed and written.
 
     Args:
         series: Time-indexed values. NaN entries are dropped before fitting.
         units: Timedelta unit string for slope (e.g. 'D' per day, 'W' per week).
         max_segments: Upper bound on the candidate segment count.
-        min_segment_duration: Minimum duration enforced on every segment during
-            the search. Defaults to no floor.
-        cache_dir: Directory for caching the result. Pass ``None`` to skip
-            caching and fit directly.
-        max_cached: Maximum number of cached results to retain; least recently
-            accessed are pruned.
+        min_segment_duration: Minimum duration enforced on every segment during the
+            search. Defaults to no floor.
+        cache_dir: Directory for caching the result. Pass ``None`` to skip caching and
+            fit directly.
+        max_cached: Maximum number of cached results to retain; least recently accessed
+            are pruned.
 
     Returns:
-        Time-indexed breakpoints with ``value`` and ``rate`` columns.
-        The final row's ``rate`` is NaN (no outgoing segment).
+        Time-indexed breakpoints with ``value`` and ``rate`` columns. The final row's
+        ``rate`` is NaN (no outgoing segment).
     """
     if cache_dir is None:
-        return piecewise_fit_auto(
-            series, units, max_segments, min_segment_duration
-        )
+        return piecewise_fit_auto(series, units, max_segments, min_segment_duration)
 
     clean = series.dropna()
     key = hashlib.md5(
@@ -248,9 +242,7 @@ def piecewise_fit_cached(
     if cache_path.exists():
         return pd.read_parquet(cache_path)
 
-    result = piecewise_fit_auto(
-        clean, units, max_segments, min_segment_duration
-    )
+    result = piecewise_fit_auto(clean, units, max_segments, min_segment_duration)
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     result.to_parquet(cache_path)
@@ -267,8 +259,8 @@ def invalidate_piecewise_fit_cache(
 
     Args:
         cache_dir: Directory to prune. Pass ``None`` (the default) to no-op.
-        max_cached: Maximum number of cached results to retain; least recently
-            accessed are pruned. Defaults to 0 (delete all).
+        max_cached: Maximum number of cached results to retain; least recently accessed
+            are pruned. Defaults to 0 (delete all).
     """
     if cache_dir is None:
         return

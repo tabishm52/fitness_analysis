@@ -30,7 +30,7 @@ activity-parser = { workspace = true }
 dev = ["pre-commit", "ruff"]
 
 [tool.ruff]
-line-length = 80
+line-length = 100
 target-version = "py314"
 
 [tool.ruff.lint]
