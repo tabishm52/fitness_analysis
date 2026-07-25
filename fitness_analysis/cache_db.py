@@ -77,7 +77,9 @@ def open_db(
     ``with db.conn:`` around raw ``db.conn.execute()`` calls that must commit
     atomically; sqlite-utils methods manage their own transactions internally.
     """
-    db = sqlite_utils.Database(db_path(cache_dir))
+    path = db_path(cache_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite_utils.Database(path)
     try:
         ensure_tables(db)
         yield db
