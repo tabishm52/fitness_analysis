@@ -12,3 +12,10 @@ repos:
         entry: uv run ruff format
         language: system
         types: [python]
+
+      - id: pytest
+        name: pytest
+        entry: uv run pytest -q
+        language: system
+        pass_filenames: false
+        always_run: true
