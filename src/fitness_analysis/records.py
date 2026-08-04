@@ -82,7 +82,7 @@ def cache_record(
     path = parquet_path(filename, segment, cache_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    obj_cols = records_df.select_dtypes(include="object").columns
+    obj_cols = records_df.select_dtypes(include=["object", "str"]).columns
     coerced = records_df.astype({col: "string" for col in obj_cols})
 
     table = pyarrow.Table.from_pandas(coerced, nthreads=1)

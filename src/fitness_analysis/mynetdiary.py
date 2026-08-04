@@ -113,7 +113,7 @@ def merge_excel_files_cached(
     cache_path.mkdir(parents=True, exist_ok=True)
 
     for sheet_name, df in data.items():
-        obj_cols = df.select_dtypes(include="object").columns
+        obj_cols = df.select_dtypes(include=["object", "str"]).columns
         df.astype({col: "string" for col in obj_cols}).to_parquet(
             cache_path / f"{sheet_name}.parquet"
         )
