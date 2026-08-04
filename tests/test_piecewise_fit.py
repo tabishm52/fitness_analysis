@@ -1,5 +1,8 @@
 """Tests for piecewise linear regression and its disk cache."""
 
+import os
+import time
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -189,3 +192,31 @@ def test_invalidate_piecewise_fit_cache_prunes_to_max_cached(tmp_path):
     invalidate_piecewise_fit_cache(tmp_path, max_cached=1)
 
     assert len(list((tmp_path / PIECEWISE_CACHE_DIR).glob("*.parquet"))) == 1
+
+
+def test_invalidate_piecewise_fit_cache_prunes_by_mtime_not_atime(tmp_path):
+    piecewise_fit_cached(TWO_SEGMENT_SERIES, "D", max_segments=2, cache_dir=tmp_path)
+    piecewise_fit_cached(TWO_SEGMENT_SERIES, "W", max_segments=2, cache_dir=tmp_path)
+    daily, weekly = sorted((tmp_path / PIECEWISE_CACHE_DIR).glob("*.parquet"))
+
+    # daily: newest atime, oldest mtime. weekly: oldest atime, newest mtime. LRU by
+    # mtime must keep weekly; atime-based LRU would keep daily instead.
+    now = time.time()
+    os.utime(daily, (now + 1000, now - 1000))
+    os.utime(weekly, (now - 1000, now + 1000))
+
+    invalidate_piecewise_fit_cache(tmp_path, max_cached=1)
+
+    remaining = list((tmp_path / PIECEWISE_CACHE_DIR).glob("*.parquet"))
+    assert remaining == [weekly]
+
+
+def test_piecewise_fit_cached_hit_touches_cache_file_mtime(tmp_path):
+    piecewise_fit_cached(TWO_SEGMENT_SERIES, "D", max_segments=2, cache_dir=tmp_path)
+    cache_file = next((tmp_path / PIECEWISE_CACHE_DIR).glob("*.parquet"))
+    old_time = time.time() - 10_000
+    os.utime(cache_file, (old_time, old_time))
+
+    piecewise_fit_cached(TWO_SEGMENT_SERIES, "D", max_segments=2, cache_dir=tmp_path)
+
+    assert cache_file.stat().st_mtime > old_time

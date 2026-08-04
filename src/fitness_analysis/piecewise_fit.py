@@ -226,8 +226,8 @@ def piecewise_fit_cached(
             search. Defaults to no floor.
         cache_dir: Directory for caching the result. Pass ``None`` to skip caching and
             fit directly.
-        max_cached: Maximum number of cached results to retain; least recently accessed
-            are pruned.
+        max_cached: Maximum number of cached results to retain; least recently used are
+            pruned.
 
     Returns:
         Time-indexed breakpoints with ``value`` and ``rate`` columns. The final row's
@@ -247,6 +247,7 @@ def piecewise_fit_cached(
     ).hexdigest()[:16]
     cache_path = cache_dir / PIECEWISE_CACHE_DIR / f"{key}.parquet"
     if cache_path.exists():
+        cache_path.touch()
         return pd.read_parquet(cache_path)
 
     result = piecewise_fit_auto(clean, units, max_segments, min_segment_duration)
@@ -266,8 +267,8 @@ def invalidate_piecewise_fit_cache(
 
     Args:
         cache_dir: Directory to prune. Pass ``None`` (the default) to no-op.
-        max_cached: Maximum number of cached results to retain; least recently accessed
-            are pruned. Defaults to 0 (delete all).
+        max_cached: Maximum number of cached results to retain; least recently used are
+            pruned. Defaults to 0 (delete all).
     """
     if cache_dir is None:
         return
@@ -277,7 +278,7 @@ def invalidate_piecewise_fit_cache(
     if not target.exists():
         return
 
-    files = sorted(target.glob("*.parquet"), key=lambda f: f.stat().st_atime)
+    files = sorted(target.glob("*.parquet"), key=lambda f: f.stat().st_mtime)
     for f in files[:-max_cached] if max_cached > 0 else files:
         f.unlink(missing_ok=True)
     if max_cached <= 0:
