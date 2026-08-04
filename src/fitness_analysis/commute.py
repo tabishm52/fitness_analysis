@@ -358,31 +358,30 @@ def load_commute_splits(
     """
     files = file_commutes["Filename"]
 
-    if cache is not None:
-        splits = {f: cache.get(f) for f in files}
-    else:
-        splits = {f: None for f in files}
-
-    misses = [f for f, r in splits.items() if r is None]
-    preloaded_coords = {}
+    hits: dict[str, list[CommuteMetrics]] = (
+        {f: cache[f] for f in files if f in cache} if cache is not None else {}
+    )
+    misses = [f for f in dict.fromkeys(files) if f not in hits]
+    preloaded_coords: dict[tuple[str, int | None], pd.DataFrame | None] = {}
 
     if not misses:
-        return splits, preloaded_coords
+        return hits, preloaded_coords
 
     miss_dfs = records.load_activity_records(misses, None, path, cache_dir)
     miss_df_map = dict(zip(misses, miss_dfs))
     miss_rows = file_commutes[file_commutes["Filename"].isin(set(misses))]
 
+    computed: dict[str, list[CommuteMetrics]] = {}
     ctx = cache_db.open_db(cache_dir) if cache_dir is not None else contextlib.nullcontext()
     with ctx as db:
         for _, activity in miss_rows.iterrows():
             fn = activity["Filename"]
-            splits[fn], file_coords = parse_commute_file(
+            computed[fn], file_coords = parse_commute_file(
                 activity, miss_df_map[fn], config, cache_dir, db
             )
             preloaded_coords.update(file_coords)
 
-    return splits, preloaded_coords
+    return hits | computed, preloaded_coords
 
 
 def build_commute_columns(
