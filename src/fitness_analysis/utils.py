@@ -99,7 +99,10 @@ def rolling_linear_rate(
         valid = ~np.isnan(arr)
         pos = np.where(valid)[0].astype(np.float64)
         pm = pos - pos.mean()
-        return units_per_step * (pm @ arr[valid]) / (pm @ pm)
+        denom = pm @ pm
+        if denom == 0:  # Single valid observation in window; slope is undefined
+            return np.nan
+        return units_per_step * (pm @ arr[valid]) / denom
 
     roller = series.rolling(window, min_periods=min_periods, center=center)
     return roller.apply(_slope, raw=True)

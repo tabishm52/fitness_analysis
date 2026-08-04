@@ -87,6 +87,17 @@ def test_rolling_linear_rate_trailing_window_is_causal():
     np.testing.assert_allclose(out.iloc[1:].to_numpy(), 2.0)
 
 
+def test_rolling_linear_rate_single_valid_point_in_window_is_nan():
+    # A window with only one non-NaN observation has an undefined slope: the OLS
+    # denominator (sum of squared centered positions) is zero.
+    idx = pd.date_range("2026-01-01", periods=10, freq="D")
+    series = pd.Series([np.nan] * 4 + [5.0] + [np.nan] * 5, index=idx)
+
+    out = rolling_linear_rate(series, window=5, min_periods=1, units="D", center=True)
+
+    assert out.isna().all()
+
+
 # --------------------------------------------------------------------------------------
 # infer_timezone
 # --------------------------------------------------------------------------------------
