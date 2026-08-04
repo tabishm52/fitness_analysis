@@ -402,6 +402,7 @@ def load_strava_activities(
     if clusters is not None:
         df["cluster_id"] = clusters["cluster_id"]
         df["cluster_name"] = clusters["cluster_name"]
+        assert config.clustering is not None
         if config.clustering.geocoding is not None:
             df["start_address"] = clusters["start_address"]
             df["end_address"] = clusters["end_address"]

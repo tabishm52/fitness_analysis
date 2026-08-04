@@ -604,8 +604,9 @@ def load_commute_activities(
         ),
     )[columns]
 
-    spans_df = (
-        compute_spans(commutes_df, clusters, config) if config.clustering is not None else None
-    )
+    spans_df = None
+    if config.clustering is not None:
+        assert clusters is not None
+        spans_df = compute_spans(commutes_df, clusters, config)
 
     return commutes_df.sort_index(), spans_df
