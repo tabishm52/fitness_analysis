@@ -1,7 +1,9 @@
 """Piecewise linear regression on time-indexed series, with caching."""
 
+import contextlib
 import hashlib
 from collections.abc import Iterable
+from os import PathLike
 from pathlib import Path
 from typing import cast
 
@@ -208,7 +210,7 @@ def piecewise_fit_cached(
     units: str,
     max_segments: int = 6,
     min_segment_duration: pd.Timedelta = pd.Timedelta(0),
-    cache_dir: Path | None = None,
+    cache_dir: str | PathLike[str] | None = None,
     max_cached: int = 30,
 ) -> pd.DataFrame:
     """Disk-cached wrapper around ``piecewise_fit_auto``.
@@ -233,6 +235,7 @@ def piecewise_fit_cached(
     """
     if cache_dir is None:
         return piecewise_fit_auto(series, units, max_segments, min_segment_duration)
+    cache_dir = Path(cache_dir)
 
     clean = series.dropna()
     key = hashlib.md5(
@@ -256,7 +259,7 @@ def piecewise_fit_cached(
 
 
 def invalidate_piecewise_fit_cache(
-    cache_dir: Path | None = None,
+    cache_dir: str | PathLike[str] | None = None,
     max_cached: int = 0,
 ) -> None:
     """Invalidate cached piecewise_fit_cached results.
@@ -268,13 +271,15 @@ def invalidate_piecewise_fit_cache(
     """
     if cache_dir is None:
         return
+    cache_dir = Path(cache_dir)
 
     target = cache_dir / PIECEWISE_CACHE_DIR
     if not target.exists():
         return
 
-    files = sorted(target.iterdir(), key=lambda f: f.stat().st_atime)
+    files = sorted(target.glob("*.parquet"), key=lambda f: f.stat().st_atime)
     for f in files[:-max_cached] if max_cached > 0 else files:
         f.unlink(missing_ok=True)
     if max_cached <= 0:
-        target.rmdir()
+        with contextlib.suppress(OSError):
+            target.rmdir()

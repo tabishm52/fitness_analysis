@@ -114,6 +114,21 @@ def test_piecewise_fit_auto_raises_when_min_segment_duration_exceeds_span():
 # --------------------------------------------------------------------------------------
 
 
+def test_piecewise_fit_cached_accepts_str_cache_dir(tmp_path):
+    out = piecewise_fit_cached(TWO_SEGMENT_SERIES, "D", max_segments=2, cache_dir=str(tmp_path))
+
+    _assert_two_segment_fit(out)
+    assert len(list((tmp_path / PIECEWISE_CACHE_DIR).glob("*.parquet"))) == 1
+
+
+def test_invalidate_piecewise_fit_cache_accepts_str_cache_dir(tmp_path):
+    piecewise_fit_cached(TWO_SEGMENT_SERIES, "D", max_segments=2, cache_dir=tmp_path)
+
+    invalidate_piecewise_fit_cache(str(tmp_path))
+
+    assert not (tmp_path / PIECEWISE_CACHE_DIR).exists()
+
+
 def test_piecewise_fit_cached_writes_and_reads_back(tmp_path):
     out = piecewise_fit_cached(TWO_SEGMENT_SERIES, "D", max_segments=2, cache_dir=tmp_path)
 
@@ -154,6 +169,17 @@ def test_invalidate_piecewise_fit_cache_deletes_all_by_default(tmp_path):
     invalidate_piecewise_fit_cache(tmp_path)
 
     assert not (tmp_path / PIECEWISE_CACHE_DIR).exists()
+
+
+def test_invalidate_piecewise_fit_cache_ignores_stray_non_parquet_entries(tmp_path):
+    piecewise_fit_cached(TWO_SEGMENT_SERIES, "D", max_segments=2, cache_dir=tmp_path)
+    stray_dir = tmp_path / PIECEWISE_CACHE_DIR / "stray_subdir"
+    stray_dir.mkdir()
+
+    invalidate_piecewise_fit_cache(tmp_path)
+
+    assert stray_dir.exists()
+    assert list((tmp_path / PIECEWISE_CACHE_DIR).glob("*.parquet")) == []
 
 
 def test_invalidate_piecewise_fit_cache_prunes_to_max_cached(tmp_path):
