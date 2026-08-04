@@ -233,7 +233,8 @@ def piecewise_fit_cached(
 
     clean = series.dropna()
     key = hashlib.md5(
-        pd.util.hash_pandas_object(clean, index=True).values.tobytes()
+        clean.to_numpy().tobytes()
+        + clean.index.to_numpy().tobytes()
         + units.encode()
         + str(max_segments).encode()
         + str(min_segment_duration).encode()
