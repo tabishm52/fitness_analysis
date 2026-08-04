@@ -7,10 +7,10 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from os import PathLike
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
-import sqlite_utils
 
 from . import cache_db, records, routes, utils
 
@@ -162,7 +162,7 @@ def parse_activity_file(
     filename: str | float,
     activity_records: pd.DataFrame,
     config: ActivitiesConfig,
-    db: sqlite_utils.Database | None = None,
+    db: cache_db.CacheDatabase | None = None,
 ) -> ActivityMetrics:
     """Compute metrics from a pre-loaded activity records DataFrame.
 
@@ -216,7 +216,7 @@ def parse_activity_file(
     )
 
     if db is not None:
-        db["activities"].upsert(result.to_db_dict(), pk=("filename", "segment"))
+        db["activities"].upsert(result.to_db_dict(), pk=cast(Any, ("filename", "segment")))
 
     return result
 

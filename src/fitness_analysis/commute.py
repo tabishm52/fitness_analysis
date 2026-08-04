@@ -5,10 +5,10 @@ import dataclasses
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from os import PathLike
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
-import sqlite_utils
 
 from . import cache_db, records, routes, strava, utils
 
@@ -234,7 +234,7 @@ def parse_commute_file(
     activity_records: pd.DataFrame,
     config: CommuteConfig,
     cache_dir: str | PathLike[str] | None = None,
-    db: sqlite_utils.Database | None = None,
+    db: cache_db.CacheDatabase | None = None,
 ) -> tuple[
     list[CommuteMetrics],
     dict[tuple[str, int | None], pd.DataFrame | None],
@@ -290,7 +290,7 @@ def parse_commute_file(
     if db is not None:
         db["commutes"].upsert_all(
             [split.to_db_dict() for split in results],
-            pk=("filename", "segment"),
+            pk=cast(Any, ("filename", "segment")),
         )
 
     return results, split_coords

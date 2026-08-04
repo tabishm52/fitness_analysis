@@ -1,15 +1,30 @@
 """SQLite cache database shared by the activities and commutes caches."""
 
+import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
 from os import PathLike
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import sqlite_utils
+from sqlite_utils.db import Table
 
 DB_FILE = "fitness_cache.db"
+
+
+class CacheDatabase(sqlite_utils.Database):
+    """``sqlite_utils.Database`` with narrower typing for ``conn`` and ``__getitem__``.
+
+    sqlite_utils types these as ``Connection | None`` and ``Table | View``; here
+    they're always a live connection and a real table.
+    """
+
+    conn: sqlite3.Connection
+
+    def __getitem__(self, table_name: str) -> Table:
+        return cast(Table, super().__getitem__(table_name))
 
 
 # --------------------------------------------------------------------------------------
@@ -33,7 +48,7 @@ def segment_from_db(seg: int) -> int | None:
     return None if seg == -1 else seg
 
 
-def segment_to_db(seg: int | None) -> int:
+def segment_to_db(seg: int | float | None) -> int:
     """Translate a segment value from Python to its SQLite representation."""
     return -1 if seg is None or pd.isna(seg) else int(seg)
 
@@ -54,6 +69,7 @@ def cache_key(fn: str | float, seg: int | None) -> tuple[str, int] | None:
     if pd.isna(fn):
         return None
 
+    assert isinstance(fn, str)
     return (fn, segment_to_db(seg))
 
 
@@ -70,7 +86,7 @@ def db_path(cache_dir: str | PathLike[str]) -> Path:
 @contextmanager
 def open_db(
     cache_dir: str | PathLike[str],
-) -> Generator[sqlite_utils.Database]:
+) -> Generator[CacheDatabase]:
     """Open (or create) the cache DB, ensure tables exist, and yield it.
 
     The connection is closed on exit even if an exception is raised. Use
@@ -79,7 +95,7 @@ def open_db(
     """
     path = db_path(cache_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite_utils.Database(path)
+    db = CacheDatabase(path)
     try:
         ensure_tables(db)
         yield db
@@ -87,7 +103,7 @@ def open_db(
         db.close()
 
 
-def ensure_tables(db: sqlite_utils.Database) -> None:
+def ensure_tables(db: CacheDatabase) -> None:
     """Create cache tables if they do not already exist."""
     db.conn.executescript("""
         CREATE TABLE IF NOT EXISTS activities (
@@ -147,7 +163,7 @@ def ensure_tables(db: sqlite_utils.Database) -> None:
 # --------------------------------------------------------------------------------------
 
 
-def delete_fingerprint(db: sqlite_utils.Database, table_name: str | None = None) -> None:
+def delete_fingerprint(db: CacheDatabase, table_name: str | None = None) -> None:
     """Delete the cluster fingerprint for one table, or all when ``None``.
 
     Call inside the caller's existing ``with db.conn:`` block so the deletion commits

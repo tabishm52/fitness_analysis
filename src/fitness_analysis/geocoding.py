@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from os import PathLike
 
 import geopy.distance
-import sqlite_utils
 from geopy import geocoders
 from geopy.extra.rate_limiter import RateLimiter
 from geopy.geocoders.base import Geocoder
@@ -150,7 +149,7 @@ def round_pos(pos: tuple[float, float]) -> tuple[float, float]:
 
 
 def lookup_geocode_cache(
-    db: sqlite_utils.Database,
+    db: cache_db.CacheDatabase,
     pos: tuple[float, float],
     match_radius_m: float,
 ) -> str | None:
@@ -194,7 +193,7 @@ def lookup_geocode_cache(
 
 
 def store_geocode_cache(
-    db: sqlite_utils.Database,
+    db: cache_db.CacheDatabase,
     pos: tuple[float, float],
     display_name: str | None,
     provider_name: str,
