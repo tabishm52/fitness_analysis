@@ -244,10 +244,7 @@ def extract_route_features(
 
     else:
         coords_list = records.load_activity_coords(
-            list(activities[config.filename_col]),
-            list(segments) if segments is not None else None,
-            path,
-            cache_dir,
+            activities[config.filename_col], segments, path, cache_dir
         )
 
     if not any(c is not None for c in coords_list):

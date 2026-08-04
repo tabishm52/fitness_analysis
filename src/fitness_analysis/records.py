@@ -2,7 +2,7 @@
 
 import itertools
 import shutil
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from os import PathLike
 from pathlib import Path
@@ -228,12 +228,10 @@ def _parse_coords_cached_packed(args: tuple) -> pd.DataFrame | None:
 
 
 def warm_records_cache(
-    files: Iterable[str | PathLike[str]],
-    segments: Iterable[int | None] | None,
-    path: str | PathLike[str],
+    record_args: Iterable[tuple],
     cache_dir: str | PathLike[str],
 ) -> None:
-    """Ensure parquet files exist for all given activity files.
+    """Ensure parquet files exist for all given whole-file activities.
 
     Identifies whole-file (``segment=None``) entries without a parquet cache and parses
     them, pooling workers when there are enough cold files to justify the overhead.
@@ -241,15 +239,13 @@ def warm_records_cache(
     written explicitly via ``cache_record``.
 
     Args:
-        files: Activity filenames (relative to ``path``).
-        segments: Per-file segment indices, or ``None`` to treat all files as whole-file
-            activities.
-        path: Directory containing the activity files.
+        record_args: ``(filename, segment, path, cache_dir)`` tuples, as built by
+            ``_record_args``.
         cache_dir: Cache directory containing the parquet subdirectory.
     """
     cold_args = [
         args
-        for args in _record_args(files, segments, path, cache_dir)
+        for args in record_args
         if args[1] is None and not parquet_path(args[0], None, cache_dir).exists()
     ]
     if not cold_args:
@@ -305,8 +301,8 @@ def invalidate_records_cache(
 
 
 def load_activity_records(
-    files: Sequence[str | PathLike[str]],
-    segments: Sequence[int | None] | None,
+    files: Iterable[str | PathLike[str]],
+    segments: Iterable[int | None] | None,
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None = None,
 ) -> list[pd.DataFrame]:
@@ -330,7 +326,7 @@ def load_activity_records(
         with ProcessPoolExecutor() as ex:
             return list(ex.map(_parse_record_cached_packed, args))
 
-    warm_records_cache(files, segments, path, cache_dir)
+    warm_records_cache(args, cache_dir)
 
     if len(args) >= POOL_MIN_FILES:
         with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS) as ex:
@@ -340,8 +336,8 @@ def load_activity_records(
 
 
 def load_activity_coords(
-    files: Sequence[str | PathLike[str]],
-    segments: Sequence[int | None] | None,
+    files: Iterable[str | PathLike[str]],
+    segments: Iterable[int | None] | None,
     path: str | PathLike[str],
     cache_dir: str | PathLike[str] | None = None,
 ) -> list[pd.DataFrame | None]:
@@ -366,7 +362,7 @@ def load_activity_coords(
         with ProcessPoolExecutor() as ex:
             return list(ex.map(_parse_coords_cached_packed, args))
 
-    warm_records_cache(files, segments, path, cache_dir)
+    warm_records_cache(args, cache_dir)
 
     if len(args) >= POOL_MIN_FILES:
         with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS) as ex:
