@@ -396,3 +396,28 @@ def test_load_power_curves_omits_activities_without_power(tmp_path):
     )
 
     assert curves.empty
+
+
+def test_load_power_curves_keeps_activities_with_same_local_date(tmp_path):
+    # Both trainer rides (forced by "Virtual Ride") fall back to home_tz regardless of
+    # GPS, so an identical CSV date collapses to an identical local_date.
+    same_date = datetime(2026, 1, 5, 8, 0)
+    rows = [
+        sfx.activity_row(same_date, activity_type="Virtual Ride", filename="activities/a.gpx"),
+        sfx.activity_row(same_date, activity_type="Virtual Ride", filename="activities/b.gpx"),
+    ]
+    sfx.write_export(
+        tmp_path,
+        rows,
+        {
+            "activities/a.gpx": gf.gpx_bytes(_stationary_points(5), power=[200] * 5),
+            "activities/b.gpx": gf.gpx_bytes(_stationary_points(5), power=[250] * 5),
+        },
+    )
+
+    curves = strava.load_power_curves(
+        tmp_path, HOME_TZ, None, strava.ActivitiesConfig(clustering=None)
+    )
+
+    assert len(curves) == 2
+    assert sorted(curves.iloc[i].dropna().unique().item() for i in range(2)) == [200.0, 250.0]

@@ -444,16 +444,20 @@ def load_power_curves(
     csv = load_strava_activities_raw(path)
     calcs, _ = build_activity_columns(csv, path, home_tz, cache_dir, config)
 
-    rows_dict = {}
+    rows = []
+    index = []
     for local_date, metrics in zip(calcs["local_date"], calcs.itertuples()):
         if metrics.power_windows is None:
             continue
-        rows_dict[local_date] = pd.Series(
-            metrics.power_curve,
-            index=pd.to_timedelta(cast(np.ndarray, metrics.power_windows), unit="s"),
+        rows.append(
+            pd.Series(
+                metrics.power_curve,
+                index=pd.to_timedelta(cast(np.ndarray, metrics.power_windows), unit="s"),
+            )
         )
+        index.append(local_date)
 
-    if not rows_dict:
+    if not rows:
         return pd.DataFrame()
 
-    return pd.DataFrame(rows_dict).T
+    return pd.DataFrame(rows, index=index)
