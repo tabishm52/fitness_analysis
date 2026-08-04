@@ -7,7 +7,7 @@ import json
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from os import PathLike
-from typing import Literal
+from typing import Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -501,6 +501,11 @@ def partition_and_cluster(
     return all_clusters, act_pos_dicts
 
 
+def _latlon(lat: float | None, lon: float | None) -> tuple[float, float]:
+    """Cast a lat/lon pair to non-``Optional``; each is always set with the other."""
+    return cast(tuple[float, float], (lat, lon))
+
+
 def compute_clusters(
     activities: pd.DataFrame,
     segments: Iterable[int | None] | None,
@@ -601,8 +606,8 @@ def compute_clusters(
     if config.geocoding is not None:
         addresses = geocoding.geocode_positions(
             itertools.chain(
-                ((r.start_lat, r.start_lon) for r in results if r.start_lat is not None),
-                ((r.end_lat, r.end_lon) for r in results if r.end_lat is not None),
+                (_latlon(r.start_lat, r.start_lon) for r in results if r.start_lat is not None),
+                (_latlon(r.end_lat, r.end_lon) for r in results if r.end_lat is not None),
             ),
             cache_dir,
             config.geocoding,
@@ -610,9 +615,9 @@ def compute_clusters(
 
         for result in results:
             if result.start_lat is not None:
-                result.start_address = addresses.get((result.start_lat, result.start_lon))
+                result.start_address = addresses.get(_latlon(result.start_lat, result.start_lon))
             if result.end_lat is not None:
-                result.end_address = addresses.get((result.end_lat, result.end_lon))
+                result.end_address = addresses.get(_latlon(result.end_lat, result.end_lon))
 
     return results
 
