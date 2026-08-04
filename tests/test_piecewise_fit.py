@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from fitness_analysis.piecewise_fit import (
     PIECEWISE_CACHE_DIR,
@@ -55,6 +56,16 @@ def test_piecewise_fit_drops_nan_before_fitting():
     _assert_two_segment_fit(out)
 
 
+def test_piecewise_fit_raises_value_error_when_infeasible():
+    with pytest.raises(ValueError, match="infeasible"):
+        piecewise_fit(
+            TWO_SEGMENT_SERIES,
+            n_segments=2,
+            units="D",
+            min_segment_duration=pd.Timedelta(days=20),
+        )
+
+
 # --------------------------------------------------------------------------------------
 # piecewise_fit_with_breaks
 # --------------------------------------------------------------------------------------
@@ -81,6 +92,21 @@ def test_piecewise_fit_auto_selects_two_segments_by_bic():
     out = piecewise_fit_auto(TWO_SEGMENT_SERIES, units="D", max_segments=2)
 
     _assert_two_segment_fit(out)
+
+
+def test_piecewise_fit_auto_rejects_max_segments_below_one():
+    with pytest.raises(ValueError, match="max_segments"):
+        piecewise_fit_auto(TWO_SEGMENT_SERIES, units="D", max_segments=0)
+
+
+def test_piecewise_fit_auto_raises_when_min_segment_duration_exceeds_span():
+    with pytest.raises(ValueError, match="min_segment_duration"):
+        piecewise_fit_auto(
+            TWO_SEGMENT_SERIES,
+            units="D",
+            max_segments=2,
+            min_segment_duration=pd.Timedelta(days=40),
+        )
 
 
 # --------------------------------------------------------------------------------------

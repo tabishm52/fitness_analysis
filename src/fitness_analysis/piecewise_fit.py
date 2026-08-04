@@ -122,10 +122,11 @@ def piecewise_fit(
 
     model = pwlf.PiecewiseLinFit(x_s, clean.values)
     candidate = _fit_n_segments(model, x_lo, x_hi, n_segments, min_segment_s)
-    assert candidate is not None, (
-        f"min_segment_duration={min_segment_duration} makes "
-        f"n_segments={n_segments} infeasible over the series span"
-    )
+    if candidate is None:
+        raise ValueError(
+            f"min_segment_duration={min_segment_duration} makes "
+            f"n_segments={n_segments} infeasible over the series span"
+        )
     breaks_s, _ssr = candidate
     return _build_result(model, breaks_s, t0, s_per_unit)
 
@@ -172,7 +173,8 @@ def piecewise_fit_auto(
         Time-indexed breakpoints with ``value`` and ``rate`` columns. The final row's
         ``rate`` is NaN (no outgoing segment).
     """
-    assert max_segments >= 1
+    if max_segments < 1:
+        raise ValueError(f"max_segments must be >= 1, got {max_segments}")
 
     clean, t0, x_s, s_per_unit = _to_seconds(series, units)
     n = len(x_s)
@@ -196,9 +198,8 @@ def piecewise_fit_auto(
             best_bic = bic
             best_breaks_s = breaks_s
 
-    assert best_breaks_s is not None, (
-        f"min_segment_duration={min_segment_duration} exceeds the series span"
-    )
+    if best_breaks_s is None:
+        raise ValueError(f"min_segment_duration={min_segment_duration} exceeds the series span")
     return _build_result(model, best_breaks_s, t0, s_per_unit)
 
 
