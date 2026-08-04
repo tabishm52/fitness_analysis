@@ -424,17 +424,18 @@ def build_commute_columns(
     tz_series = pd.Series(np.nan, index=csv_commutes.index, dtype=object)
     tz_series = tz_series.mask(tz_series.isna(), home_tz)
 
-    # Keyed by UTC timestamp (no filename for CSV-only activities).
-    csv_splits = {
-        utc_date: process_commute_csv(activity, utc_date, tz_series.loc[utc_date], config)
-        for utc_date, activity in csv_commutes.iterrows()
-    }
+    csv_splits = [
+        process_commute_csv(activity, cast(pd.Timestamp, utc_date), tz, config)
+        for (utc_date, activity), tz in zip(csv_commutes.iterrows(), tz_series, strict=True)
+    ]
 
     metrics = []
-    for utc_date, activity in commutes.iterrows():
+    csv_pos = 0
+    for _, activity in commutes.iterrows():
         fn = activity["Filename"]
         if pd.isna(fn):
-            metrics.append(csv_splits[utc_date])
+            metrics.append(csv_splits[csv_pos])
+            csv_pos += 1
         else:
             metrics.extend(file_splits[fn])
 
