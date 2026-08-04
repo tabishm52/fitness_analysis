@@ -258,3 +258,64 @@ def test_load_activity_coords_preserves_order_and_nones(tmp_path):
 
     assert out[0] is not None
     assert out[1] is None
+
+
+# --------------------------------------------------------------------------------------
+# no-cache-dir pool gating (POOL_MIN_FILES)
+# --------------------------------------------------------------------------------------
+
+
+def _spy_on_process_pool(monkeypatch):
+    """Replaces records.ProcessPoolExecutor with a call-counting subclass."""
+    calls = []
+    real_executor = records.ProcessPoolExecutor
+
+    class SpyExecutor(real_executor):
+        def __init__(self, *args, **kwargs):
+            calls.append(1)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(records, "ProcessPoolExecutor", SpyExecutor)
+    return calls
+
+
+def test_load_activity_records_no_cache_dir_empty_list_skips_pool(tmp_path, monkeypatch):
+    calls = _spy_on_process_pool(monkeypatch)
+
+    out = records.load_activity_records([], None, tmp_path)
+
+    assert out == []
+    assert calls == []
+
+
+def test_load_activity_records_no_cache_dir_tiny_list_skips_pool(tmp_path, monkeypatch):
+    _write_gpx(tmp_path / "a.gpx", hr=(100, 101))
+    calls = _spy_on_process_pool(monkeypatch)
+
+    out = records.load_activity_records(["a.gpx"], None, tmp_path)
+
+    assert out[0]["heart_rate"].tolist() == [100, 101]
+    assert calls == []
+
+
+def test_load_activity_records_no_cache_dir_large_list_uses_pool(tmp_path, monkeypatch):
+    files = []
+    for i in range(records.POOL_MIN_FILES):
+        name = f"ride{i}.gpx"
+        _write_gpx(tmp_path / name, hr=(100, 101))
+        files.append(name)
+    calls = _spy_on_process_pool(monkeypatch)
+
+    out = records.load_activity_records(files, None, tmp_path)
+
+    assert len(out) == records.POOL_MIN_FILES
+    assert calls == [1]
+
+
+def test_load_activity_coords_no_cache_dir_empty_list_skips_pool(tmp_path, monkeypatch):
+    calls = _spy_on_process_pool(monkeypatch)
+
+    out = records.load_activity_coords([], None, tmp_path)
+
+    assert out == []
+    assert calls == []

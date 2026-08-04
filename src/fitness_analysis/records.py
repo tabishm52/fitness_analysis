@@ -2,7 +2,7 @@
 
 import itertools
 import shutil
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from os import PathLike
 from pathlib import Path
@@ -295,6 +295,35 @@ def invalidate_records_cache(
             p.unlink()
 
 
+def _load_batch[T](
+    args: list[tuple],
+    cache_dir: str | PathLike[str] | None,
+    packed_fn: Callable[[tuple], T],
+) -> list[T]:
+    """Applies ``packed_fn`` over ``args``, pooling only above ``POOL_MIN_FILES``.
+
+    Args:
+        args: Argument tuples to apply ``packed_fn`` to.
+        cache_dir: Selects the pool: ``ProcessPoolExecutor`` when ``None`` (uncached
+            parsing is CPU-bound), ``ThreadPoolExecutor`` otherwise (cache hits are
+            I/O-bound).
+        packed_fn: Picklable, single-argument wrapper applied to each of ``args``
+            (required for ``ProcessPoolExecutor``).
+
+    Returns:
+        One result per element of ``args``, in order.
+    """
+    if len(args) < POOL_MIN_FILES:
+        return [packed_fn(a) for a in args]
+
+    if cache_dir is None:
+        with ProcessPoolExecutor() as ex:
+            return list(ex.map(packed_fn, args))
+
+    with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS) as ex:
+        return list(ex.map(packed_fn, args))
+
+
 # --------------------------------------------------------------------------------------
 # Top-level entry points
 # --------------------------------------------------------------------------------------
@@ -322,17 +351,10 @@ def load_activity_records(
     """
     args = list(_record_args(files, segments, path, cache_dir))
 
-    if cache_dir is None:
-        with ProcessPoolExecutor() as ex:
-            return list(ex.map(_parse_record_cached_packed, args))
+    if cache_dir is not None:
+        warm_records_cache(args, cache_dir)
 
-    warm_records_cache(args, cache_dir)
-
-    if len(args) >= POOL_MIN_FILES:
-        with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS) as ex:
-            return list(ex.map(_parse_record_cached_packed, args))
-    else:
-        return [parse_record_cached(*a) for a in args]
+    return _load_batch(args, cache_dir, _parse_record_cached_packed)
 
 
 def load_activity_coords(
@@ -358,14 +380,7 @@ def load_activity_coords(
     """
     args = list(_record_args(files, segments, path, cache_dir))
 
-    if cache_dir is None:
-        with ProcessPoolExecutor() as ex:
-            return list(ex.map(_parse_coords_cached_packed, args))
+    if cache_dir is not None:
+        warm_records_cache(args, cache_dir)
 
-    warm_records_cache(args, cache_dir)
-
-    if len(args) >= POOL_MIN_FILES:
-        with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS) as ex:
-            return list(ex.map(_parse_coords_cached_packed, args))
-    else:
-        return [parse_coords_cached(*a) for a in args]
+    return _load_batch(args, cache_dir, _parse_coords_cached_packed)
