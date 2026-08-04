@@ -227,7 +227,7 @@ def load_file_metrics(
     cache_dir: str | PathLike[str] | None,
     config: ActivitiesConfig,
     cache: dict[str, ActivityMetrics] | None = None,
-) -> tuple[pd.DataFrame, dict[tuple[str, None], pd.DataFrame | None]]:
+) -> tuple[pd.DataFrame, dict[tuple[str, int | None], pd.DataFrame | None]]:
     """Compute per-activity metrics, using a pre-loaded cache when provided.
 
     Cache misses are computed and written to the DB as each file is processed.
@@ -245,24 +245,22 @@ def load_file_metrics(
         - Preloaded coords dict keyed by ``(filename, None)`` for each cache miss, ready
           to pass to ``routes.cluster_routes_cached``.
     """
-    if cache is not None:
-        rows = [ActivityMetrics(filename=f) if pd.isna(f) else cache.get(f) for f in files]
-    else:
-        rows = [ActivityMetrics(filename=f) if pd.isna(f) else None for f in files]
-
-    misses = [f for f, r in zip(files, rows) if r is None]
+    named = [f for f in files if not pd.isna(f)]
+    misses = [f for f in dict.fromkeys(named) if cache is None or f not in cache]
     miss_dfs = records.load_activity_records(misses, None, path, cache_dir)
 
+    computed: dict[str, ActivityMetrics] = {}
     if misses:
         ctx = cache_db.open_db(cache_dir) if cache_dir is not None else contextlib.nullcontext()
         with ctx as db:
-            miss_map = {
+            computed = {
                 f: parse_activity_file(f, df, config, db) for f, df in zip(misses, miss_dfs)
             }
 
-        rows = [r if r is not None else miss_map[f] for f, r in zip(files, rows)]
+    resolved = (cache or {}) | computed
+    rows = [ActivityMetrics(filename=f) if pd.isna(f) else resolved[f] for f in files]
 
-    preloaded_coords = {
+    preloaded_coords: dict[tuple[str, int | None], pd.DataFrame | None] = {
         (f, None): records.coords_from_records(df) for f, df in zip(misses, miss_dfs)
     }
 
