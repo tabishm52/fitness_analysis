@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from os import PathLike
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -195,6 +196,19 @@ def eer_female(
 # --------------------------------------------------------------------------------------
 
 
+def _ewm_mean(series: pd.Series, halflife: str, times: pd.Index, min_periods: int) -> pd.Series:
+    """Thin wrapper around ``Series.ewm(...).mean()`` to satisfy pyright.
+
+    pandas-stubs types ``halflife: float`` and ``times: ndarray | Series``; pandas
+    itself accepts a string and an ``Index``.
+    """
+    return series.ewm(
+        halflife=cast(float, halflife),
+        times=cast(np.ndarray, times),
+        min_periods=min_periods,
+    ).mean()
+
+
 def load_mnd_data(
     path: str | PathLike[str],
     eer_func: Callable[[pd.Series], pd.Series],
@@ -251,14 +265,8 @@ def load_mnd_data(
     if unexpected_units:
         raise ValueError(f"Unexpected body weight units: {unexpected_units}")
     weight["actual"] = bw.set_index("Date")["Value"].resample("D").mean()
-    weight["smoothed"] = (
-        weight["actual"]
-        .ewm(
-            halflife=tuning.weight_halflife,
-            times=weight.index,
-            min_periods=weight_min_periods,
-        )
-        .mean()
+    weight["smoothed"] = _ewm_mean(
+        weight["actual"], tuning.weight_halflife, weight.index, weight_min_periods
     )
 
     # Calculate weight gain/loss rate over time
@@ -278,22 +286,14 @@ def load_mnd_data(
 
     # Impute unlogged days with the rolling average of logged days
     food_imputed = calories["food"].fillna(
-        calories["food"]
-        .ewm(
-            halflife=tuning.calorie_halflife,
-            times=calories.index,
-            min_periods=calorie_min_periods,
-        )
-        .mean()
+        _ewm_mean(calories["food"], tuning.calorie_halflife, calories.index, calorie_min_periods)
     )
 
     # Calculate rolling average of net calorie balance
     net_daily = food_imputed - calories["baseline"] - calories["exercise"]
-    calories["net_recorded"] = net_daily.ewm(
-        halflife=tuning.calorie_halflife,
-        times=calories.index,
-        min_periods=calorie_min_periods,
-    ).mean()
+    calories["net_recorded"] = _ewm_mean(
+        net_daily, tuning.calorie_halflife, calories.index, calorie_min_periods
+    )
 
     # Convert observed weight gain/loss in lbs/week to calories/day.
     calories["net_observed"] = utils.CAL_PER_LB_WEEK * utils.rolling_linear_rate(
@@ -305,19 +305,11 @@ def load_mnd_data(
     )
 
     # Calculate "accuracy" of calorie counting relative to actual weight loss
-    avg_food_recorded = food_imputed.ewm(
-        halflife=tuning.calorie_halflife,
-        times=calories.index,
-        min_periods=calorie_min_periods,
-    ).mean()
-    avg_exercise = (
-        calories["exercise"]
-        .ewm(
-            halflife=tuning.calorie_halflife,
-            times=calories.index,
-            min_periods=calorie_min_periods,
-        )
-        .mean()
+    avg_food_recorded = _ewm_mean(
+        food_imputed, tuning.calorie_halflife, calories.index, calorie_min_periods
+    )
+    avg_exercise = _ewm_mean(
+        calories["exercise"], tuning.calorie_halflife, calories.index, calorie_min_periods
     )
     avg_consumption_observed = calories["baseline"] + avg_exercise + calories["net_observed"]
     calories["accuracy"] = avg_food_recorded / avg_consumption_observed
