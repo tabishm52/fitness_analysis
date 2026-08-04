@@ -244,7 +244,10 @@ def extract_route_features(
 
     else:
         coords_list = records.load_activity_coords(
-            activities[config.filename_col], segments, path, cache_dir
+            list(activities[config.filename_col]),
+            list(segments) if segments is not None else None,
+            path,
+            cache_dir,
         )
 
     if not any(c is not None for c in coords_list):
@@ -569,7 +572,7 @@ def compute_clusters(
         partition_and_cluster(valid_idx, valid_routes, config) if valid_routes else ([], {})
     )
     gps_clusters_named = [
-        (activities.loc[idx_list, config.name_col].mode().iat[0], idx_list)
+        (cast(str, activities.loc[idx_list, config.name_col].mode().iat[0]), idx_list)
         for idx_list in gps_clusters
     ]
 
@@ -741,7 +744,7 @@ def cluster_routes_cached(
             marks = ",".join("?" * len(fns))
             rows = db[table].rows_where(f"filename IN ({marks})", fns) if fns else []
             lookup = {(r["filename"], r["segment"]): ClusterResult.from_db_dict(r) for r in rows}
-            results = [lookup.get(k, ClusterResult()) for k in keys]
+            results = [lookup.get(cast(tuple[str, int], k), ClusterResult()) for k in keys]
 
             return pd.DataFrame(results, index=activities.index).astype({"cluster_id": "Int64"})
 

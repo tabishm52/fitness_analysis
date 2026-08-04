@@ -95,7 +95,7 @@ class ActivityMetrics:
         """Construct from a ``db["activities"].rows_where()`` row dict."""
         excluded = {"power_windows", "power_curve"}
         field_names = {f.name for f in dataclasses.fields(cls)} - excluded
-        obj = cls(**{name: row.get(name) for name in field_names})
+        obj = cls(**{name: row[name] for name in field_names})
 
         if row.get("power_windows") is not None:
             obj.power_windows = np.array(json.loads(row["power_windows"]))
@@ -448,7 +448,7 @@ def load_power_curves(
             continue
         rows_dict[local_date] = pd.Series(
             metrics.power_curve,
-            index=pd.to_timedelta(metrics.power_windows, unit="s"),
+            index=pd.to_timedelta(cast(np.ndarray, metrics.power_windows), unit="s"),
         )
 
     if not rows_dict:

@@ -159,7 +159,7 @@ def eer_male(
         Estimated daily energy requirement for each timestamp in ``weight``.
     """
     # Calculate time series of age in fractional years
-    age = (weight.index - np.datetime64(dob)).days / 365.25
+    age = (cast(pd.DatetimeIndex, weight.index) - np.datetime64(dob)).days / 365.25
 
     # Perform male EER calculation per MyNetDiary
     # https://www.mynetdiary.com/supportArticle.do?articleId=328
@@ -184,7 +184,7 @@ def eer_female(
         Estimated daily energy requirement for each timestamp in ``weight``.
     """
     # Calculate time series of age in fractional years
-    age = (weight.index - np.datetime64(dob)).days / 365.25
+    age = (cast(pd.DatetimeIndex, weight.index) - np.datetime64(dob)).days / 365.25
 
     # Perform female EER calculation per MyNetDiary
     # https://www.mynetdiary.com/supportArticle.do?articleId=328

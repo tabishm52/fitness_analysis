@@ -421,7 +421,8 @@ def build_commute_columns(
 
     csv_commutes = commutes[~file_mask]
     tz_series = pd.Series(np.nan, index=csv_commutes.index, dtype=object)
-    tz_series = tz_series.mask(tz_series.isna(), home_tz)
+    other = home_tz(tz_series) if callable(home_tz) else home_tz
+    tz_series = tz_series.mask(tz_series.isna(), other)
 
     csv_splits = [
         process_commute_csv(activity, cast(pd.Timestamp, utc_date), tz, config)
@@ -465,7 +466,7 @@ def compute_spans(
     commutes_df: pd.DataFrame,
     clusters: pd.DataFrame,
     config: CommuteConfig,
-) -> pd.DataFrame | None:
+) -> pd.DataFrame:
     """Detect commute spans and enrich them with counts and addresses.
 
     Builds the home/work position signal from ``clusters``, runs PELT changepoint
@@ -512,14 +513,14 @@ def compute_spans(
 
             home_addrs = pd.concat(
                 [
-                    clusters.loc[morning_mask, "start_address"],
-                    clusters.loc[afternoon_mask, "end_address"],
+                    cast(pd.Series, clusters.loc[morning_mask, "start_address"]),
+                    cast(pd.Series, clusters.loc[afternoon_mask, "end_address"]),
                 ]
             ).dropna()
             work_addrs = pd.concat(
                 [
-                    clusters.loc[morning_mask, "end_address"],
-                    clusters.loc[afternoon_mask, "start_address"],
+                    cast(pd.Series, clusters.loc[morning_mask, "end_address"]),
+                    cast(pd.Series, clusters.loc[afternoon_mask, "start_address"]),
                 ]
             ).dropna()
 

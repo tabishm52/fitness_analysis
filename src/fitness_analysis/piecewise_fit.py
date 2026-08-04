@@ -3,6 +3,7 @@
 import hashlib
 from collections.abc import Iterable
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -146,7 +147,8 @@ def piecewise_fit_with_breaks(
         ``rate`` is NaN (no outgoing segment).
     """
     clean, t0, x_s, s_per_unit = _to_seconds(series, units)
-    breaks_s = (pd.DatetimeIndex(breaks) - t0).total_seconds().to_numpy()
+    breaks_idx = pd.DatetimeIndex(cast(list[pd.Timestamp], breaks))
+    breaks_s = (breaks_idx - t0).total_seconds().to_numpy()
     model = pwlf.PiecewiseLinFit(x_s, clean.values)
     return _build_result(model, breaks_s, t0, s_per_unit)
 
