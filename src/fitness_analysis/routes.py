@@ -298,7 +298,9 @@ def frechet_pair(
     return raw / denom
 
 
-def route_pairs(route_list: list[dict], config: RouteClusterConfig) -> Iterator[tuple]:
+def route_pairs(
+    route_list: list[tuple[np.ndarray, float]], config: RouteClusterConfig
+) -> Iterator[tuple]:
     """Generate argument tuples for all pairs in route_list."""
     n = len(route_list)
     for i in range(n):
@@ -476,8 +478,8 @@ def partition_and_cluster(
 
     # Drop partitions that fall below min_samples after resampling (routes with zero
     # length after NaN filtering are silently excluded).
-    resampled_partitions = []
-    member_partitions = []
+    resampled_partitions: list[list[tuple[np.ndarray, float]]] = []
+    member_partitions: list[list[int]] = []
     for members in raw_partitions:
         surviving, resampled = resample_partition(members, valid_routes, route_pos_dicts, config)
         if len(resampled) >= config.min_samples:
