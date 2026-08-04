@@ -27,6 +27,22 @@ def _stationary_points(n: int) -> list[tuple[int, float, float]]:
 
 
 # --------------------------------------------------------------------------------------
+# ActivitiesConfig
+# --------------------------------------------------------------------------------------
+
+
+def test_activities_config_does_not_mutate_shared_clustering_config():
+    shared = routes.RouteClusterConfig()
+    assert shared.raw_csv is False
+
+    config = strava.ActivitiesConfig(clustering=shared)
+
+    assert config.clustering is not None
+    assert config.clustering.raw_csv is True
+    assert shared.raw_csv is False
+
+
+# --------------------------------------------------------------------------------------
 # ActivityMetrics
 # --------------------------------------------------------------------------------------
 

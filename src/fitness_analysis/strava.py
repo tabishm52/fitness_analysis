@@ -44,6 +44,7 @@ class ActivitiesConfig:
 
     def __post_init__(self) -> None:
         if self.clustering is not None:
+            self.clustering = dataclasses.replace(self.clustering)
             self.clustering.raw_csv = True
 
 
