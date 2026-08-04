@@ -149,6 +149,28 @@ def test_identify_inactive_periods_short_run_not_flagged():
     assert not out.any()
 
 
+def test_identify_inactive_periods_duplicate_timestamp_same_value_is_inactive():
+    # Zero elapsed time and zero value change (0/0 = NaN): the value genuinely didn't
+    # change, so this counts as inactive.
+    idx = pd.DatetimeIndex(["2026-01-01T00:00:00", "2026-01-01T00:00:00", "2026-01-01T00:01:00"])
+    series = pd.Series([1.0, 1.0, 2.0], index=idx)
+
+    out = identify_inactive_periods(series, activity_threshold=0.1, min_duration=pd.Timedelta(0))
+
+    assert out.iloc[1]
+
+
+def test_identify_inactive_periods_duplicate_timestamp_changed_value_is_active():
+    # Zero elapsed time but a real value change (nonzero/0 = inf): genuine evidence of
+    # activity.
+    idx = pd.DatetimeIndex(["2026-01-01T00:00:00", "2026-01-01T00:00:00", "2026-01-01T00:01:00"])
+    series = pd.Series([1.0, 5.0, 2.0], index=idx)
+
+    out = identify_inactive_periods(series, activity_threshold=0.1, min_duration=pd.Timedelta(0))
+
+    assert not out.iloc[1]
+
+
 # --------------------------------------------------------------------------------------
 # power_curve_windows / compute_power_curve
 # --------------------------------------------------------------------------------------

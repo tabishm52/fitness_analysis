@@ -163,11 +163,13 @@ def identify_inactive_periods(
     # predecessor so we assign zero.
     t_s = (series.index - series.index[0]).total_seconds().to_numpy()
     vals = series.to_numpy(dtype=float)
-    velocity = np.concatenate([[0.0], np.diff(vals) / np.diff(t_s)])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        velocity = np.concatenate([[0.0], np.diff(vals) / np.diff(t_s)])
 
     # Identify starts and ends of contiguous runs below velocity threshold; padding
-    # ensures every run has a start and end
-    below = velocity < activity_threshold
+    # ensures every run has a start and end. NaN (duplicate timestamp, unchanged
+    # value) counts as inactive; inf is already excluded by the comparison.
+    below = (velocity < activity_threshold) | np.isnan(velocity)
     below_pad = np.concatenate([[False], below, [False]])
     change_at = np.diff(below_pad).nonzero()[0]
     starts, ends = change_at[0::2], change_at[1::2]
