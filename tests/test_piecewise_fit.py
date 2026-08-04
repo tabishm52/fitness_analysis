@@ -1,5 +1,6 @@
 """Tests for piecewise linear regression and its disk cache."""
 
+import importlib
 import os
 import time
 
@@ -9,12 +10,18 @@ import pytest
 
 from fitness_analysis.piecewise_fit import (
     PIECEWISE_CACHE_DIR,
+    _min_gap_breaks,
     invalidate_piecewise_fit_cache,
     piecewise_fit,
     piecewise_fit_auto,
     piecewise_fit_cached,
     piecewise_fit_with_breaks,
 )
+
+# `__init__.py` re-exports the `piecewise_fit` function under the same name, which
+# shadows the submodule for `import fitness_analysis.piecewise_fit as X` — go via
+# sys.modules instead.
+piecewise_fit_module = importlib.import_module("fitness_analysis.piecewise_fit")
 
 # 30 daily points, exact two-segment piecewise line: slope -1/day to day 15, then +2/day.
 _IDX = pd.date_range("2026-01-01", periods=30, freq="D")
@@ -112,6 +119,43 @@ def test_piecewise_fit_auto_raises_when_min_segment_duration_exceeds_span():
         )
 
 
+# _fit_n_segments is mocked with controlled ssr values so this test verifies the BIC
+# comparison loop itself (picks the lower-BIC candidate), isolated from differential
+# evolution's own convergence behavior.
+
+
+def test_piecewise_fit_auto_bic_rejects_marginal_extra_segment(monkeypatch):
+    ssr_by_segs = {1: 1_000.0, 2: 1.0, 3: 0.95}
+
+    def fake_fit_n_segments(model, x_lo, x_hi, n_segs, min_segment_s):
+        return np.linspace(x_lo, x_hi, n_segs + 1), ssr_by_segs[n_segs]
+
+    monkeypatch.setattr(piecewise_fit_module, "_fit_n_segments", fake_fit_n_segments)
+
+    out = piecewise_fit_auto(TWO_SEGMENT_SERIES, units="D", max_segments=3)
+
+    assert len(out) == 3  # 2 segments (3 breakpoints) wins on BIC over 3 segments
+
+
+# --------------------------------------------------------------------------------------
+# _min_gap_breaks
+# --------------------------------------------------------------------------------------
+
+
+def test_min_gap_breaks_output_is_ordered_and_respects_min_gap():
+    breaks = _min_gap_breaks(np.array([5.0, 1.0, 3.0]), x_lo=0.0, min_gap=2.0)
+
+    assert np.all(np.diff(breaks) >= 2.0)
+    assert breaks[0] >= 2.0  # first breakpoint is also >= min_gap from x_lo
+
+
+def test_min_gap_breaks_zero_slack_gives_exact_floor_spacing():
+    # No slack to distribute: breakpoints land exactly min_gap apart from x_lo.
+    breaks = _min_gap_breaks(np.zeros(3), x_lo=0.0, min_gap=4.0)
+
+    np.testing.assert_allclose(breaks, [4.0, 8.0, 12.0])
+
+
 # --------------------------------------------------------------------------------------
 # piecewise_fit_cached
 # --------------------------------------------------------------------------------------
@@ -151,6 +195,21 @@ def test_piecewise_fit_cached_different_params_get_different_cache_entries(tmp_p
     piecewise_fit_cached(TWO_SEGMENT_SERIES, "W", max_segments=2, cache_dir=tmp_path)
 
     assert len(list((tmp_path / PIECEWISE_CACHE_DIR).glob("*.parquet"))) == 2
+
+
+def test_piecewise_fit_cached_key_is_sensitive_to_series_values(tmp_path):
+    series_a = TWO_SEGMENT_SERIES
+    series_b = TWO_SEGMENT_SERIES + 1.0
+
+    out_a = piecewise_fit_cached(series_a, "D", max_segments=2, cache_dir=tmp_path)
+    out_b = piecewise_fit_cached(series_b, "D", max_segments=2, cache_dir=tmp_path)
+
+    assert len(list((tmp_path / PIECEWISE_CACHE_DIR).glob("*.parquet"))) == 2
+    assert out_a["value"].iloc[0] != out_b["value"].iloc[0]
+
+    # Re-fetching series_a must return its own cached entry, not series_b's.
+    out_a_again = piecewise_fit_cached(series_a, "D", max_segments=2, cache_dir=tmp_path)
+    pd.testing.assert_frame_equal(out_a, out_a_again)
 
 
 # --------------------------------------------------------------------------------------
