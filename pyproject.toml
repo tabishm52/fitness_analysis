@@ -30,7 +30,7 @@ dependencies = [
 activity-parser = { workspace = true }
 
 [dependency-groups]
-dev = ["pandas-stubs", "pre-commit", "pyright", "pytest", "ruff"]
+dev = ["garmin-fit-sdk", "pandas-stubs", "pre-commit", "pyright", "pytest", "ruff"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -46,7 +46,7 @@ select = ["E", "W", "F", "I", "PL", "UP"]
 max-args = 8
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["PLR2004"]
+"tests/*" = ["PLR2004", "PLR0913"]
 
 [tool.pyright]
 useLibraryCodeForTypes = false
