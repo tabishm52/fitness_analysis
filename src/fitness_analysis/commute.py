@@ -431,12 +431,14 @@ def build_commute_columns(
 
     metrics = []
     csv_pos = 0
+    seen_files: set = set()
     for _, activity in commutes.iterrows():
         fn = activity["Filename"]
         if pd.isna(fn):
             metrics.append(csv_splits[csv_pos])
             csv_pos += 1
-        else:
+        elif fn not in seen_files:
+            seen_files.add(fn)
             metrics.extend(file_splits[fn])
 
     segments = [m.segment for m in metrics]

@@ -413,6 +413,21 @@ def test_build_commute_columns_fileless_same_instant_both_kept():
     assert set(calcs["description"]) == {"Commute A", "Commute B"}
 
 
+def test_build_commute_columns_duplicate_filename_row_emitted_once(tmp_path):
+    """A filename repeated across CSV rows must not double-emit its splits."""
+    _write_commute_gpx(tmp_path, "ride.gpx")
+    commutes = pd.DataFrame(
+        {"Activity Name": ["Commute A", "Commute A dup"], "Filename": ["ride.gpx", "ride.gpx"]},
+        index=pd.DatetimeIndex([datetime(2026, 1, 5, 8, 0), datetime(2026, 1, 5, 8, 0)]),
+    )
+
+    calcs, _ = commute.build_commute_columns(
+        commutes, tmp_path, HOME_TZ, None, commute.CommuteConfig(clustering=None)
+    )
+
+    assert len(calcs) == 1
+
+
 def test_build_commute_columns_clustering_disabled_returns_none():
     same_date = datetime(2026, 1, 5, 16, 0)
     commutes = pd.DataFrame(
