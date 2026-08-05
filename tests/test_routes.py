@@ -166,27 +166,27 @@ def test_resample_route_filters_nan():
 
 def test_frechet_pair_identical_routes_within_tolerance():
     xy = np.array([[0.0, 0.0], [100.0, 0.0], [200.0, 0.0]])
-    ratio = routes.frechet_pair(xy, xy.copy(), 200.0, 200.0, 50.0, 0.018, 1.2)
+    ratio = routes.frechet_pair(xy, xy.copy(), 200.0, 200.0, routes.RouteClusterConfig())
     assert ratio < 1.0
 
 
 def test_frechet_pair_far_apart_routes_above_tolerance():
     xy_a = np.array([[0.0, 0.0], [100.0, 0.0], [200.0, 0.0]])
     xy_b = xy_a + np.array([0.0, 1000.0])
-    ratio = routes.frechet_pair(xy_a, xy_b, 200.0, 200.0, 50.0, 0.018, 1.2)
+    ratio = routes.frechet_pair(xy_a, xy_b, 200.0, 200.0, routes.RouteClusterConfig())
     assert ratio > 1.0
 
 
 def test_frechet_pair_length_ratio_prefilter_skips_shape_comparison():
     xy_a = np.array([[0.0, 0.0], [200.0, 0.0]])
     xy_b = np.array([[0.0, 0.0], [500.0, 0.0]])
-    ratio = routes.frechet_pair(xy_a, xy_b, 200.0, 500.0, 50.0, 0.018, 1.2)
+    ratio = routes.frechet_pair(xy_a, xy_b, 200.0, 500.0, routes.RouteClusterConfig())
     assert ratio == float("inf")
 
 
 def test_route_pairs_generates_all_combinations():
     route_list = [(np.zeros((2, 2)), 100.0), (np.zeros((2, 2)), 200.0), (np.zeros((2, 2)), 300.0)]
-    pairs = list(routes.route_pairs(route_list, routes.RouteClusterConfig()))
+    pairs = list(routes.route_pairs(route_list))
     assert len(pairs) == 3
     assert [(p[2], p[3]) for p in pairs] == [(100.0, 200.0), (100.0, 300.0), (200.0, 300.0)]
 

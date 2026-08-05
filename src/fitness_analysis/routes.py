@@ -21,26 +21,32 @@ from . import cache_db, geocoding, records, utils
 
 @dataclass
 class RouteClusterConfig:
-    """Configuration parameters for ``cluster_routes``.
+    """Configuration parameters for route clustering.
 
     Two routes cluster together when their Fréchet distance is below the affine
-    tolerance ``similarity_floor_m + similarity_slope * mean_length``. Routes are
-    resampled to a point count proportional to length (``points_per_km``, clamped to
-    ``[points_min, points_max]``); since Fréchet distance is O(n²) in the point count,
-    ``points_per_km`` should be kept relatively low.
+    tolerance ``similarity_floor_m + similarity_slope * mean_length``.
+
+    To minimize the number of Fréchet pairs actually computed, routes are pre-filtered
+    by ``partition_eps_m`` for matching start/end locations and by ``length_ratio_max``
+    for matching lengths.
+
+    For the Fréchet computation itself, routes are resampled to a point count
+    proportional to length (``points_per_km``, clamped to ``[points_min, points_max]``).
+    Since Fréchet distance is O(n²) in the point count, ``points_per_km`` should be kept
+    relatively low.
 
     Attributes:
         points_per_km: Resampled points per km of route length.
         points_min: Minimum resampled points per route.
         points_max: Maximum resampled points per route.
-        partition_eps_m: Max start/end separation, in metres, for two routes to share an
+        partition_eps_m: Max start/end separation, in meters, for two routes to share an
             origin/destination.
-        similarity_floor_m: Constant similarity tolerance, in metres.
+        length_ratio_max: Routes longer than this multiple of each other are skipped
+            without a full shape comparison.
+        similarity_floor_m: Constant similarity tolerance, in meters.
         similarity_slope: Proportional similarity tolerance, as a fraction of mean route
             length.
         min_samples: Minimum rides on a route for it to form a cluster.
-        length_ratio_max: Routes longer than this multiple of each other are skipped
-            without a full shape comparison.
         geocoding: Geocoding parameters, or ``None`` to omit ``start_address`` and
             ``end_address`` from cluster results.
     """
@@ -49,10 +55,10 @@ class RouteClusterConfig:
     points_min: int = 20
     points_max: int = 100
     partition_eps_m: float = 750.0
+    length_ratio_max: float = 1.2
     similarity_floor_m: float = 50.0
     similarity_slope: float = 0.018
     min_samples: int = 2
-    length_ratio_max: float = 1.2
     geocoding: geocoding.GeocodingConfig | None = dataclasses.field(
         default_factory=geocoding.GeocodingConfig
     )
@@ -62,8 +68,8 @@ class RouteClusterConfig:
         """``partition_eps_m`` converted to radians."""
         return self.partition_eps_m / utils.EARTH_RADIUS_M
 
-    # If True, cluster_routes() uses Strava CSV column names. If False, cluster_routes()
-    # uses column names from load_strava_activities().
+    # If True, the clustering pipeline uses Strava CSV column names. If False, it uses
+    # column names from load_strava_activities().
     raw_csv: bool = dataclasses.field(default=False, init=False, repr=False)
 
     @property
@@ -85,8 +91,9 @@ class ClusterResult:
         cluster_name: Modal activity name within the cluster, or ``None`` for unmatched
             activities.
         start_lat: Representative start latitude. For clustered GPS activities this is
-            the cluster centroid (median); for GPS activities below ``min_samples`` it
-            is the raw route start. ``None`` for activities without GPS data.
+            the cluster centroid (median); for GPS activities that didn't join a
+            cluster (partition below ``min_samples``, or DBSCAN noise) it is the raw
+            route start. ``None`` for activities without GPS data.
         start_lon: Representative start longitude (same semantics as ``start_lat``).
         end_lat: Representative end latitude (same semantics as ``start_lat``).
         end_lon: Representative end longitude (same semantics as ``start_lat``).
@@ -273,9 +280,7 @@ def frechet_pair(
     xy_b: np.ndarray,
     len_a: float,
     len_b: float,
-    similarity_floor_m: float,
-    similarity_slope: float,
-    length_ratio_max: float,
+    config: RouteClusterConfig,
 ) -> float:
     """Compute discrete Fréchet distance for one pair, normalised by tolerance.
 
@@ -286,29 +291,27 @@ def frechet_pair(
     Args:
         xy_a: Resampled UTM coordinates for route A, shape (n, 2).
         xy_b: Resampled UTM coordinates for route B, shape (m, 2).
-        len_a: Arc length of route A in metres.
-        len_b: Arc length of route B in metres.
-        similarity_floor_m: Constant tolerance in metres.
-        similarity_slope: Proportional tolerance, as a fraction of route length.
-        length_ratio_max: Routes longer than this multiple of each other are skipped
-            without computing a full shape comparison.
+        len_a: Arc length of route A in meters.
+        len_b: Arc length of route B in meters.
+        config: Clustering configuration (``similarity_floor_m``, ``similarity_slope``,
+            ``length_ratio_max``).
 
     Returns:
         Raw Fréchet distance divided by the affine tolerance (``< 1.0`` means within
         tolerance), or ``inf`` if the length ratio pre-filter rejects the pair.
     """
-    if len_a > len_b * length_ratio_max or len_b > len_a * length_ratio_max:
+    if len_a > len_b * config.length_ratio_max or len_b > len_a * config.length_ratio_max:
         return np.inf
 
     raw = frechet_distance(LineString(xy_a), LineString(xy_b))
-    denom = similarity_floor_m + similarity_slope * (len_a + len_b) / 2.0
+    denom = config.similarity_floor_m + config.similarity_slope * (len_a + len_b) / 2.0
     return raw / denom
 
 
 def route_pairs(
-    route_list: list[tuple[np.ndarray, float]], config: RouteClusterConfig
-) -> Iterator[tuple]:
-    """Generate argument tuples for all pairs in route_list."""
+    route_list: list[tuple[np.ndarray, float]],
+) -> Iterator[tuple[np.ndarray, np.ndarray, float, float]]:
+    """Generate ``(xy_a, xy_b, len_a, len_b)`` tuples for all pairs in route_list."""
     n = len(route_list)
     for i in range(n):
         for j in range(i + 1, n):
@@ -317,9 +320,6 @@ def route_pairs(
                 route_list[j][0],
                 route_list[i][1],
                 route_list[j][1],
-                config.similarity_floor_m,
-                config.similarity_slope,
-                config.length_ratio_max,
             )
 
 
@@ -494,7 +494,7 @@ def partition_and_cluster(
 
     all_clusters = []
     for members, resampled in zip(member_partitions, resampled_partitions):
-        results = [frechet_pair(*p) for p in route_pairs(resampled, config)]
+        results = [frechet_pair(*p, config) for p in route_pairs(resampled)]
         labels = cluster_partition(symmetric_matrix(len(resampled), results), config)
 
         clusters = {}
@@ -547,7 +547,8 @@ def compute_clusters(
         segments: Per-activity segment indices, or ``None`` to treat all activities as
             whole-file.
         path: Strava export directory.
-        cache_dir: Optional records parquet cache directory.
+        cache_dir: Optional cache root for records parquet and geocoding if configured.
+            ``None`` skips both.
         preloaded_coords: Optional mapping of ``(filename, segment)`` to
             already-extracted lat/lon DataFrames. Passed to ``extract_route_features``;
             files not present are batch-loaded.
@@ -661,8 +662,8 @@ def cluster_routes(
         segments: Per-activity segment indices, or ``None`` to treat all activities as
             whole-file.
         path: Strava export directory.
-        cache_dir: Optional cache directory for the records parquet cache. If omitted,
-            activity files are parsed on every call.
+        cache_dir: Optional cache root for records parquet and geocoding if configured.
+            ``None`` skips both.
         config: Clustering parameters. Defaults to ``RouteClusterConfig()``.
 
     Returns:
@@ -673,7 +674,7 @@ def cluster_routes(
           unmatched activities.
         - ``start_lat``, ``start_lon``: Representative start position. Cluster centroid
           (median) for GPS-clustered activities; raw route start for GPS activities
-          below ``min_samples``; ``None`` for activities without GPS data.
+          that didn't join a cluster; ``None`` for activities without GPS data.
         - ``end_lat``, ``end_lon``: Representative end position (same semantics as
           ``start_lat``/``start_lon``).
     """
@@ -701,26 +702,17 @@ def cluster_routes_cached(
     staleness. Any change to the activity set or config parameters forces a full
     recompute; otherwise cluster columns are read directly from the DB.
 
-    Cache persistence (SELECT, UPDATE, fingerprint upsert) is handled internally. The
-    rows being clustered must already exist in the DB before this function is called so
-    that the UPDATE has rows to write into.
+    Cached results live under ``cache_dir``, in the SQLite table named by ``table``;
+    persistence (SELECT, UPDATE, fingerprint upsert) is handled internally. The rows
+    being clustered must already exist in the DB before this function is called so
+    that the UPDATE has rows to write into. Passing ``None`` for ``cache_dir`` always
+    recomputes with no DB I/O.
 
-    Args:
-        activities: Activity DataFrame. Must have columns matching
-            ``config.filename_col`` and ``config.name_col``.
-        segments: Per-activity segment indices, or ``None`` to treat all activities as
-            whole-file.
-        path: Strava export directory (passed to ``cluster_routes``).
-        cache_dir: Records cache directory. If ``None``, clustering is always computed
-            and no DB I/O is performed.
-        table: DB table to read from and write cluster columns into.
-        preloaded_coords: Optional mapping of ``(filename, segment)`` to
-            already-extracted lat/lon DataFrames. Passed to ``compute_clusters`` on a
-            stale-fingerprint recompute; ignored on a cache hit.
-        config: Clustering configuration.
-
-    Returns:
-        DataFrame identical to ``cluster_routes``.
+    Arguments and return values mirror ``cluster_routes``, with two additional args:
+    - table: DB table to read from and write cached cluster columns into.
+    - preloaded_coords: Optional mapping of ``(filename, segment)`` to already-extracted
+      lat/lon DataFrames. Need not cover every activity — missing entries are parsed
+      fresh.
     """
     if config is None:
         config = RouteClusterConfig()
