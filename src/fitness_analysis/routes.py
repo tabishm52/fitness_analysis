@@ -642,6 +642,11 @@ def compute_clusters(
 # --------------------------------------------------------------------------------------
 
 
+def _cluster_frame(results: list[ClusterResult], index: pd.Index) -> pd.DataFrame:
+    """Build the ``ClusterResult`` output DataFrame with a nullable ``cluster_id``."""
+    return pd.DataFrame(results, index=index).astype({"cluster_id": "Int64"})
+
+
 def cluster_routes(
     activities: pd.DataFrame,
     segments: Iterable[int | None] | None,
@@ -681,10 +686,10 @@ def cluster_routes(
     if config is None:
         config = RouteClusterConfig()
 
-    return pd.DataFrame(
+    return _cluster_frame(
         compute_clusters(activities, segments, path, cache_dir, None, config),
-        index=activities.index,
-    ).astype({"cluster_id": "Int64"})
+        activities.index,
+    )
 
 
 def cluster_routes_cached(
@@ -718,7 +723,7 @@ def cluster_routes_cached(
         config = RouteClusterConfig()
 
     if cache_dir is None:
-        return pd.DataFrame(
+        return _cluster_frame(
             compute_clusters(
                 activities,
                 segments,
@@ -727,8 +732,8 @@ def cluster_routes_cached(
                 preloaded_coords,
                 config,
             ),
-            index=activities.index,
-        ).astype({"cluster_id": "Int64"})
+            activities.index,
+        )
 
     filenames = activities[config.filename_col]
     segs = segments if segments is not None else itertools.repeat(None)
@@ -749,7 +754,7 @@ def cluster_routes_cached(
             lookup = {(r["filename"], r["segment"]): ClusterResult.from_db_dict(r) for r in rows}
             results = [lookup.get(cast(tuple[str, int], k), ClusterResult()) for k in keys]
 
-            return pd.DataFrame(results, index=activities.index).astype({"cluster_id": "Int64"})
+            return _cluster_frame(results, activities.index)
 
     results = compute_clusters(
         activities,
@@ -779,4 +784,4 @@ def cluster_routes_cached(
                 (table, expected_fp),
             )
 
-    return pd.DataFrame(results, index=activities.index).astype({"cluster_id": "Int64"})
+    return _cluster_frame(results, activities.index)
