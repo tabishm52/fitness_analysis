@@ -141,6 +141,33 @@ def invalidate_mnd_cache(cache_dir: str | PathLike[str]) -> None:
 # --------------------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _EerCoeffs:
+    """Per-sex coefficients for the EER formula (imperial units)."""
+
+    base: float
+    age: float
+    weight: float
+    height: float
+
+
+# Coefficients per MyNetDiary: https://www.mynetdiary.com/supportArticle.do?articleId=328
+_EER_MALE = _EerCoeffs(base=662, age=9.53, weight=7.23, height=13.71)
+_EER_FEMALE = _EerCoeffs(base=354, age=6.91, weight=4.25, height=18.44)
+
+
+def _eer(
+    weight: pd.Series,
+    height: float,
+    dob: str | np.datetime64 | pd.Timestamp,
+    pa: float,
+    coeffs: _EerCoeffs,
+) -> pd.Series:
+    # Calculate time series of age in fractional years
+    age = (cast(pd.DatetimeIndex, weight.index) - np.datetime64(dob)).days / 365.25
+    return coeffs.base - coeffs.age * age + pa * (coeffs.weight * weight + coeffs.height * height)
+
+
 def eer_male(
     weight: pd.Series,
     height: float,
@@ -158,12 +185,7 @@ def eer_male(
     Returns:
         Estimated daily energy requirement for each timestamp in ``weight``.
     """
-    # Calculate time series of age in fractional years
-    age = (cast(pd.DatetimeIndex, weight.index) - np.datetime64(dob)).days / 365.25
-
-    # Perform male EER calculation per MyNetDiary
-    # https://www.mynetdiary.com/supportArticle.do?articleId=328
-    return 662 - 9.53 * age + pa * (7.23 * weight + 13.71 * height)
+    return _eer(weight, height, dob, pa, _EER_MALE)
 
 
 def eer_female(
@@ -183,12 +205,7 @@ def eer_female(
     Returns:
         Estimated daily energy requirement for each timestamp in ``weight``.
     """
-    # Calculate time series of age in fractional years
-    age = (cast(pd.DatetimeIndex, weight.index) - np.datetime64(dob)).days / 365.25
-
-    # Perform female EER calculation per MyNetDiary
-    # https://www.mynetdiary.com/supportArticle.do?articleId=328
-    return 354 - 6.91 * age + pa * (4.25 * weight + 18.44 * height)
+    return _eer(weight, height, dob, pa, _EER_FEMALE)
 
 
 # --------------------------------------------------------------------------------------
