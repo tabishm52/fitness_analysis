@@ -1,5 +1,6 @@
 """Shared constants and utility functions for fitness_analysis module."""
 
+import functools
 import math
 
 import numpy as np
@@ -22,9 +23,6 @@ CAL_PER_LB_WEEK = _FAT_KCAL_PER_LB / 7
 # Geographical constants
 EARTH_RADIUS_M = 6_378_137.0  # WGS-84 semi-major axis in metres
 EARTH_M_PER_DEG = 2 * math.pi * EARTH_RADIUS_M / 360
-
-# Global timezone finder shared across the fitness_analysis module
-tz_finder = timezonefinder.TimezoneFinder()
 
 
 # --------------------------------------------------------------------------------------
@@ -111,6 +109,12 @@ def rolling_linear_rate(
 # --------------------------------------------------------------------------------------
 
 
+@functools.cache
+def _tz_finder() -> timezonefinder.TimezoneFinder:
+    """Lazily-constructed, process-wide-cached TimezoneFinder instance."""
+    return timezonefinder.TimezoneFinder()
+
+
 def infer_timezone(records: pd.DataFrame) -> str | None:
     """Determine the timezone of an activity from its GPS location data.
 
@@ -134,7 +138,7 @@ def infer_timezone(records: pd.DataFrame) -> str | None:
     if idx is None:
         return None
 
-    return tz_finder.timezone_at(lng=lng_col.loc[idx], lat=lat_col.loc[idx])
+    return _tz_finder().timezone_at(lng=lng_col.loc[idx], lat=lat_col.loc[idx])
 
 
 def identify_inactive_periods(
