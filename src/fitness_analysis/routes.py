@@ -215,7 +215,7 @@ def extract_route_features(
     cache_dir: str | PathLike[str] | None,
     preloaded_coords: dict[tuple[str, int | None], pd.DataFrame | None] | None,
     config: RouteClusterConfig,
-) -> tuple[list, list[pd.DataFrame]]:
+) -> tuple[list[int], list[pd.DataFrame]]:
     """Load GPS records and return trimmed lat/lon data for each route.
 
     Args:
@@ -231,7 +231,7 @@ def extract_route_features(
 
     Returns:
         Tuple of:
-        - ``valid_idx``: the original activity index values.
+        - ``valid_idx``: 0-based positions into ``activities``.
         - ``valid_routes``: corresponding trimmed lat/lon DataFrames, one per valid
           route (``latitude`` and ``longitude`` columns, NaN-trimmed).
     """
@@ -258,8 +258,7 @@ def extract_route_features(
     if not any(c is not None for c in coords_list):
         return [], []
 
-    gps_idx = list(activities.index)
-    valid_idx = [idx for idx, c in zip(gps_idx, coords_list) if c is not None]
+    valid_idx = [pos for pos, c in enumerate(coords_list) if c is not None]
     valid_routes = [c for c in coords_list if c is not None]
     return valid_idx, valid_routes
 
@@ -464,22 +463,21 @@ def resample_partition(
 
 
 def partition_and_cluster(
-    valid_idx: list,
+    valid_idx: list[int],
     valid_routes: list[pd.DataFrame],
     config: RouteClusterConfig,
-) -> tuple[list[list], dict]:
+) -> tuple[list[list[int]], dict[int, dict]]:
     """Partition routes by start/end location and cluster within each partition.
 
     Args:
-        valid_idx: Activity index values corresponding to each route.
+        valid_idx: 0-based activity positions corresponding to each route.
         valid_routes: Trimmed lat/lon data from ``extract_route_features``.
         config: Clustering configuration.
 
     Returns:
         Tuple of:
-        - Activity index values grouped into clusters, ordered by cluster size
-          descending (largest first).
-        - Per-activity position dict keyed by activity index.
+        - Activity positions grouped into clusters, ordered by cluster size descending.
+        - Per-activity position dict keyed by activity position.
     """
     raw_partitions, route_pos_dicts = partition_by_location(valid_routes, config)
     act_pos_dicts = dict(zip(valid_idx, route_pos_dicts))
@@ -558,11 +556,14 @@ def compute_clusters(
     Returns:
         List of ``ClusterResult`` aligned to ``activities``, one per row.
     """
+    # Positions, not activities.index labels, identify activities throughout: index
+    # labels can duplicate (e.g. two rides at the same timestamp) and collapse.
     has_file = activities[config.filename_col].notna()
+    has_file_positions = np.flatnonzero(has_file.to_numpy())
     file_segments = (
         (seg for seg, keep in zip(segments, has_file) if keep) if segments is not None else None
     )
-    valid_idx, valid_routes = extract_route_features(
+    subset_valid_idx, valid_routes = extract_route_features(
         activities[has_file],
         file_segments,
         path,
@@ -570,22 +571,28 @@ def compute_clusters(
         preloaded_coords,
         config,
     )
+    valid_idx = [int(has_file_positions[i]) for i in subset_valid_idx]
 
     # Start every activity as unmatched
-    results = [ClusterResult() for _ in activities.index]
+    results = [ClusterResult() for _ in range(len(activities))]
 
     # GPS clustering, named by modal activity description
     gps_clusters, act_pos_dicts = (
         partition_and_cluster(valid_idx, valid_routes, config) if valid_routes else ([], {})
     )
-    gps_clusters_named = [
-        (cast(str, activities.loc[idx_list, config.name_col].mode().iat[0]), idx_list)
-        for idx_list in gps_clusters
-    ]
+    gps_clusters_named = []
+    for idx_list in gps_clusters:
+        modes = activities[config.name_col].iloc[np.array(idx_list)].mode()
+        name = cast(str, modes.iat[0]) if len(modes) else None
+        gps_clusters_named.append((name, idx_list))
 
     # Name-based clustering of activities that yielded no GPS data
-    no_gps_mask = has_file & ~activities.index.isin(valid_idx)
-    desc = activities.loc[no_gps_mask, config.name_col].dropna()
+    valid_mask = np.zeros(len(activities), dtype=bool)
+    valid_mask[valid_idx] = True
+    no_gps_positions = np.flatnonzero(has_file.to_numpy() & ~valid_mask)
+    desc = pd.Series(
+        activities[config.name_col].to_numpy()[no_gps_positions], index=no_gps_positions
+    ).dropna()
     name_clusters = [
         (name, list(group.index))
         for name, group in desc.groupby(desc)
@@ -593,7 +600,6 @@ def compute_clusters(
     ]
 
     # Merge and renumber by size (0 = most frequent)
-    pos_of = {idx: pos for pos, idx in enumerate(activities.index)}
     all_clusters = sorted(
         [(name, idx_list, True) for name, idx_list in gps_clusters_named]
         + [(name, idx_list, False) for name, idx_list in name_clusters],
@@ -602,16 +608,14 @@ def compute_clusters(
     )
     for global_id, (cluster_name, idx_list, has_gps) in enumerate(all_clusters):
         pos = _centroid_pos([act_pos_dicts[idx] for idx in idx_list]) if has_gps else {}
-        for act_idx in idx_list:
-            results[pos_of[act_idx]] = ClusterResult(
-                cluster_id=global_id, cluster_name=cluster_name, **pos
-            )
+        for act_pos in idx_list:
+            results[act_pos] = ClusterResult(cluster_id=global_id, cluster_name=cluster_name, **pos)
 
     # Populate raw start/end for GPS activities that didn't form a cluster
     clustered_idx = {idx for idx_list in gps_clusters for idx in idx_list}
-    for act_idx in valid_idx:
-        if act_idx not in clustered_idx:
-            results[pos_of[act_idx]] = ClusterResult(**act_pos_dicts[act_idx])
+    for act_pos in valid_idx:
+        if act_pos not in clustered_idx:
+            results[act_pos] = ClusterResult(**act_pos_dicts[act_pos])
 
     if config.geocoding is not None:
         addresses = geocoding.geocode_positions(

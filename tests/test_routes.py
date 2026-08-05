@@ -266,6 +266,45 @@ def test_compute_clusters_gps_activities_cluster_together():
     assert results[0].start_lat is not None
 
 
+def test_compute_clusters_duplicate_timestamps_both_get_results():
+    """Activities sharing an index timestamp must not collapse onto one another."""
+    route_a, route_b = _close_route_pair()
+    activities = _activities(
+        [
+            {"filename": "a.gpx", "description": "Ride A"},
+            {"filename": "b.gpx", "description": "Ride B"},
+        ],
+        ["2026-01-05 08:00:00", "2026-01-05 08:00:00"],
+    )
+    config = routes.RouteClusterConfig(geocoding=None, min_samples=2)
+    preloaded: _PreloadedCoords = {("a.gpx", None): route_a, ("b.gpx", None): route_b}
+
+    results = routes.compute_clusters(activities, None, "unused", None, preloaded, config)
+
+    assert results[0].start_lat is not None
+    assert results[1].start_lat is not None
+    assert results[0].cluster_id == results[1].cluster_id == 0
+
+
+def test_compute_clusters_all_nan_names_does_not_raise():
+    """A GPS cluster whose members all have a NaN name must not raise IndexError."""
+    route_a, route_b = _close_route_pair()
+    activities = _activities(
+        [
+            {"filename": "a.gpx", "description": np.nan},
+            {"filename": "b.gpx", "description": np.nan},
+        ],
+        ["2026-01-05 08:00:00", "2026-01-06 08:00:00"],
+    )
+    config = routes.RouteClusterConfig(geocoding=None, min_samples=2)
+    preloaded: _PreloadedCoords = {("a.gpx", None): route_a, ("b.gpx", None): route_b}
+
+    results = routes.compute_clusters(activities, None, "unused", None, preloaded, config)
+
+    assert [r.cluster_id for r in results] == [0, 0]
+    assert results[0].cluster_name is None
+
+
 def test_compute_clusters_no_gps_files_cluster_by_name():
     activities = _activities(
         [
