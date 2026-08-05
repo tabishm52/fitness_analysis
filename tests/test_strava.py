@@ -374,6 +374,23 @@ def test_load_strava_activities_omits_addresses_when_geocoding_disabled(tmp_path
 # --------------------------------------------------------------------------------------
 
 
+def test_load_power_curves_skips_clustering(tmp_path, monkeypatch):
+    """Power curves never use clusters, so clustering (and any geocoding it would
+    trigger) must not run even when the caller's config has it enabled."""
+
+    def _fail(*_args, **_kwargs):
+        raise AssertionError("cluster_routes_cached should not be called by load_power_curves")
+
+    monkeypatch.setattr(routes, "cluster_routes_cached", _fail)
+    pts = _stationary_points(5)
+    rows = [sfx.activity_row(datetime(2026, 1, 5, 8, 0), filename="activities/ride.gpx")]
+    sfx.write_export(tmp_path, rows, {"activities/ride.gpx": gf.gpx_bytes(pts, power=[200] * 5)})
+
+    curves = strava.load_power_curves(tmp_path, HOME_TZ, None, strava.ActivitiesConfig())
+
+    assert len(curves) == 1
+
+
 def test_load_power_curves_constant_power(tmp_path):
     pts = _stationary_points(5)
     rows = [sfx.activity_row(datetime(2026, 1, 5, 8, 0), filename="activities/ride.gpx")]

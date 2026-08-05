@@ -441,8 +441,10 @@ def load_power_curves(
     if config is None:
         config = ActivitiesConfig()
 
+    # Power curves don't need clusters, so skip route clustering
+    curve_config = dataclasses.replace(config, clustering=None)
     csv = load_strava_activities_raw(path)
-    calcs, _ = build_activity_columns(csv, path, home_tz, cache_dir, config)
+    calcs, _ = build_activity_columns(csv, path, home_tz, cache_dir, curve_config)
 
     rows = []
     index = []
