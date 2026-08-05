@@ -1,6 +1,5 @@
 """Tests for piecewise linear regression and its disk cache."""
 
-import importlib
 import os
 import time
 
@@ -8,20 +7,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import fitness_analysis.piecewise_fit as piecewise_fit_module
 from fitness_analysis.piecewise_fit import (
     PIECEWISE_CACHE_DIR,
     _min_gap_breaks,
     invalidate_piecewise_fit_cache,
-    piecewise_fit,
     piecewise_fit_auto,
     piecewise_fit_cached,
+    piecewise_fit_fixed,
     piecewise_fit_with_breaks,
 )
-
-# `__init__.py` re-exports the `piecewise_fit` function under the same name, which
-# shadows the submodule for `import fitness_analysis.piecewise_fit as X` — go via
-# sys.modules instead.
-piecewise_fit_module = importlib.import_module("fitness_analysis.piecewise_fit")
 
 # 30 daily points, exact two-segment piecewise line: slope -1/day to day 15, then +2/day.
 _IDX = pd.date_range("2026-01-01", periods=30, freq="D")
@@ -47,28 +42,28 @@ def _assert_two_segment_fit(out: pd.DataFrame):
 
 
 # --------------------------------------------------------------------------------------
-# piecewise_fit
+# piecewise_fit_fixed
 # --------------------------------------------------------------------------------------
 
 
-def test_piecewise_fit_recovers_known_breakpoint_and_slopes():
-    out = piecewise_fit(TWO_SEGMENT_SERIES, n_segments=2, units="D")
+def test_piecewise_fit_fixed_recovers_known_breakpoint_and_slopes():
+    out = piecewise_fit_fixed(TWO_SEGMENT_SERIES, n_segments=2, units="D")
 
     _assert_two_segment_fit(out)
 
 
-def test_piecewise_fit_drops_nan_before_fitting():
+def test_piecewise_fit_fixed_drops_nan_before_fitting():
     series = TWO_SEGMENT_SERIES.copy()
     series.iloc[5] = np.nan
 
-    out = piecewise_fit(series, n_segments=2, units="D")
+    out = piecewise_fit_fixed(series, n_segments=2, units="D")
 
     _assert_two_segment_fit(out)
 
 
-def test_piecewise_fit_raises_value_error_when_infeasible():
+def test_piecewise_fit_fixed_raises_value_error_when_infeasible():
     with pytest.raises(ValueError, match="infeasible"):
-        piecewise_fit(
+        piecewise_fit_fixed(
             TWO_SEGMENT_SERIES,
             n_segments=2,
             units="D",

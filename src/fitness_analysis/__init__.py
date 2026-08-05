@@ -20,9 +20,9 @@ from .mynetdiary import (
 )
 from .piecewise_fit import (
     invalidate_piecewise_fit_cache,
-    piecewise_fit,
     piecewise_fit_auto,
     piecewise_fit_cached,
+    piecewise_fit_fixed,
     piecewise_fit_with_breaks,
 )
 from .records import (
@@ -60,9 +60,9 @@ __all__ = [
     "load_commute_activities",
     "load_mnd_data",
     "load_strava_activities",
-    "piecewise_fit",
     "piecewise_fit_auto",
     "piecewise_fit_cached",
+    "piecewise_fit_fixed",
     "piecewise_fit_with_breaks",
     "seed_geocode_cache",
 ]

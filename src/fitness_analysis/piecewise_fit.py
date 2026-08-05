@@ -99,13 +99,13 @@ def _build_result(
     return result
 
 
-def piecewise_fit(
+def piecewise_fit_fixed(
     series: pd.Series,
     n_segments: int,
     units: str,
     min_segment_duration: pd.Timedelta = pd.Timedelta(0),
 ) -> pd.DataFrame:
-    """Fit a piecewise linear regression on a time series.
+    """Fit a piecewise linear regression with a fixed number of segments.
 
     Args:
         series: Time-indexed values. NaN entries are dropped before fitting.
