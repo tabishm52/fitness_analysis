@@ -562,6 +562,21 @@ def test_compute_spans_detects_changepoint_when_location_shifts():
 # --------------------------------------------------------------------------------------
 
 
+def test_load_commute_activities_no_commutes_returns_empty_frame(tmp_path):
+    """Regression: build_commute_columns crashed on a zero-row `metrics` list (an empty
+    list comprehension has no columns for .set_index("date")), so this graceful-empty
+    path was previously unreachable dead code."""
+    rows = [sfx.activity_row(datetime(2026, 1, 5, 8, 0), commute=False, name="Not a commute")]
+    sfx.write_export(tmp_path, rows, {})
+
+    commutes_df, spans_df = commute.load_commute_activities(
+        tmp_path, HOME_TZ, None, commute.CommuteConfig(clustering=None)
+    )
+
+    assert commutes_df.empty
+    assert spans_df is None
+
+
 def test_load_commute_activities_filters_to_commutes(tmp_path):
     rows = [
         sfx.activity_row(datetime(2026, 1, 5, 8, 0), commute=True, name="Commute"),

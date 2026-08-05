@@ -442,11 +442,11 @@ def build_commute_columns(
             metrics.extend(file_splits[fn])
 
     segments = [m.segment for m in metrics]
-    calcs = (
-        pd.DataFrame([dataclasses.asdict(m) for m in metrics])
-        .set_index("date")
-        .astype({"segment": "Int64"})
-    )
+    if metrics:
+        calcs_data = [dataclasses.asdict(m) for m in metrics]
+    else:
+        calcs_data = {f.name: [] for f in dataclasses.fields(CommuteMetrics)}
+    calcs = pd.DataFrame(calcs_data).set_index("date").astype({"segment": "Int64"})
 
     if config.clustering is None:
         return calcs, None
