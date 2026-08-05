@@ -4,18 +4,15 @@ import math
 
 import numpy as np
 import pandas as pd
-import pint
 import ruptures as rpt
 import timezonefinder
 from sklearn.preprocessing import StandardScaler
 
-# Unit conversion factors derived from pint
-_ureg = pint.UnitRegistry()
-
-KM_TO_MI = _ureg.Quantity(1, "km").to("mile").magnitude
-M_TO_FT = _ureg.Quantity(1, "m").to("ft").magnitude
-LBS_TO_KG = _ureg.Quantity(1, "lb").to("kg").magnitude
-IN_TO_CM = _ureg.Quantity(1, "inch").to("cm").magnitude
+# Unit conversion factors
+KM_TO_MI = 1 / 1.609344
+M_TO_FT = 1 / 0.3048
+LBS_TO_KG = 0.45359237
+IN_TO_CM = 2.54
 
 # Physiological approximation: 1 lb of body fat ≈ 3500 kcal
 # Divided by 7 days/week → kcal/day per lb/week of weight change
