@@ -143,7 +143,7 @@ def invalidate_mnd_cache(cache_dir: str | PathLike[str]) -> None:
 
 @dataclass(frozen=True)
 class _EerCoeffs:
-    """Per-sex coefficients for the EER formula (imperial units)."""
+    """Per-sex coefficients for the EER formula (metric units: kg, cm)."""
 
     base: float
     age: float
@@ -151,28 +151,29 @@ class _EerCoeffs:
     height: float
 
 
-# Coefficients per MyNetDiary: https://www.mynetdiary.com/supportArticle.do?articleId=328
-_EER_MALE = _EerCoeffs(base=662, age=9.53, weight=7.23, height=13.71)
-_EER_FEMALE = _EerCoeffs(base=354, age=6.91, weight=4.25, height=18.44)
+# Coefficients per MyNetDiary, effective January 2025:
+# https://www.mynetdiary.com/supportArticle.do?articleId=328
+_EER_MALE = _EerCoeffs(base=753.07, age=10.83, weight=14.10, height=6.50)
+_EER_FEMALE = _EerCoeffs(base=584.90, age=7.01, weight=11.71, height=5.72)
 
 
 def _eer(
     weight: pd.Series,
     height: float,
     dob: str | np.datetime64 | pd.Timestamp,
-    pa: float,
     coeffs: _EerCoeffs,
 ) -> pd.Series:
     # Calculate time series of age in fractional years
     age = (cast(pd.DatetimeIndex, weight.index) - np.datetime64(dob)).days / 365.25
-    return coeffs.base - coeffs.age * age + pa * (coeffs.weight * weight + coeffs.height * height)
+    weight_kg = weight * utils.LBS_TO_KG
+    height_cm = height * utils.IN_TO_CM
+    return coeffs.base - coeffs.age * age + coeffs.weight * weight_kg + coeffs.height * height_cm
 
 
 def eer_male(
     weight: pd.Series,
     height: float,
     dob: str | np.datetime64 | pd.Timestamp,
-    pa: float = 1.0,
 ) -> pd.Series:
     """Male estimated energy requirements (per day) from MyNetDiary.
 
@@ -180,19 +181,17 @@ def eer_male(
         weight: Time-indexed weight measurements in pounds.
         height: Height, in inches.
         dob: Date of birth.
-        pa: Activity level, 1.0 = sedentary, up to 1.45 for very active.
 
     Returns:
         Estimated daily energy requirement for each timestamp in ``weight``.
     """
-    return _eer(weight, height, dob, pa, _EER_MALE)
+    return _eer(weight, height, dob, _EER_MALE)
 
 
 def eer_female(
     weight: pd.Series,
     height: float,
     dob: str | np.datetime64 | pd.Timestamp,
-    pa: float = 1.0,
 ) -> pd.Series:
     """Female estimated energy requirements (per day) from MyNetDiary.
 
@@ -200,12 +199,11 @@ def eer_female(
         weight: Time-indexed weight measurements in pounds.
         height: Height, in inches.
         dob: Date of birth.
-        pa: Activity level, 1.0 = sedentary, up to 1.45 for very active.
 
     Returns:
         Estimated daily energy requirement for each timestamp in ``weight``.
     """
-    return _eer(weight, height, dob, pa, _EER_FEMALE)
+    return _eer(weight, height, dob, _EER_FEMALE)
 
 
 # --------------------------------------------------------------------------------------

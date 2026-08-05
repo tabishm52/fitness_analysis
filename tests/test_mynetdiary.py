@@ -126,39 +126,23 @@ def test_invalidate_mnd_cache_deletes_cache_dir(tmp_path):
 
 
 def test_eer_male_pinned_output():
-    # Pinned regression value, not independently derived. Update deliberately, not
-    # incidentally, if the coefficients change.
+    # Pinned regression value (MyNetDiary formula effective January 2025)
     dob = "2000-01-05"
     weight = pd.Series([150.0], index=pd.DatetimeIndex(["2010-01-05"]))
     height = 70.0
 
     result = mynetdiary.eer_male(weight, height, dob)
-    assert result.iloc[0] == pytest.approx(2610.886954)
-
-
-def test_eer_male_activity_factor_scales_only_activity_term():
-    dob = "2000-01-05"
-    weight = pd.Series([150.0], index=pd.DatetimeIndex(["2010-01-05"]))
-    height = 70.0
-
-    # pa=0 zeroes the activity term, isolating the base+age term without needing to
-    # know (or hardcode) the activity coefficients.
-    base = mynetdiary.eer_male(weight, height, dob, pa=0.0).iloc[0]
-    sedentary = mynetdiary.eer_male(weight, height, dob, pa=1.0).iloc[0]
-    active = mynetdiary.eer_male(weight, height, dob, pa=1.45).iloc[0]
-
-    assert active - sedentary == pytest.approx(0.45 * (sedentary - base))
+    assert result.iloc[0] == pytest.approx(2759.803037)
 
 
 def test_eer_female_pinned_output():
-    # Pinned regression value, not independently derived. Update deliberately, not
-    # incidentally, if the coefficients change.
+    # Pinned regression value (MyNetDiary formula effective January 2025)
     dob = "2000-01-05"
     weight = pd.Series([130.0], index=pd.DatetimeIndex(["2010-01-05"]))
     height = 65.0
 
     result = mynetdiary.eer_female(weight, height, dob)
-    assert result.iloc[0] == pytest.approx(2035.990541)
+    assert result.iloc[0] == pytest.approx(2149.666069)
 
 
 # --------------------------------------------------------------------------------------

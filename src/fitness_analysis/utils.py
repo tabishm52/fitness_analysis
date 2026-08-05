@@ -15,6 +15,7 @@ _ureg = pint.UnitRegistry()
 KM_TO_MI = _ureg.Quantity(1, "km").to("mile").magnitude
 M_TO_FT = _ureg.Quantity(1, "m").to("ft").magnitude
 LBS_TO_KG = _ureg.Quantity(1, "lb").to("kg").magnitude
+IN_TO_CM = _ureg.Quantity(1, "inch").to("cm").magnitude
 
 # Physiological approximation: 1 lb of body fat ≈ 3500 kcal
 # Divided by 7 days/week → kcal/day per lb/week of weight change
