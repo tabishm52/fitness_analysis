@@ -136,7 +136,15 @@ def compute_cluster_fingerprint(
         MD5 hex digest string.
     """
     init_fields = {f.name for f in dataclasses.fields(config) if f.init}
-    config_dict = {k: v for k, v in dataclasses.asdict(config).items() if k in init_fields}
+
+    # GeocodingProvider holds a thread lock; asdict cannot deepcopy that.
+    sanitized = config
+    if config.geocoding is not None:
+        sanitized = dataclasses.replace(
+            config, geocoding=dataclasses.replace(config.geocoding, provider=None)
+        )
+
+    config_dict = {k: v for k, v in dataclasses.asdict(sanitized).items() if k in init_fields}
 
     file_keys = sorted({k for k in keys if k is not None})
     payload = json.dumps({"keys": file_keys, "config": config_dict}, sort_keys=True)

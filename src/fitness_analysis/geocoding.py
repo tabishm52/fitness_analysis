@@ -3,8 +3,9 @@
 import math
 import os
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import PathLike
+from typing import Protocol
 
 import geopy.distance
 from geopy import geocoders
@@ -14,20 +15,17 @@ from geopy.geocoders.base import Geocoder
 from . import cache_db, utils
 
 
-@dataclass
-class GeocodingConfig:
-    """Configuration parameters for reverse geocoding.
+class Provider(Protocol):
+    """Structural contract for anything injectable as ``GeocodingConfig.provider``.
 
-    Attributes:
-        match_radius_m: Distance threshold for cache hits, in metres. A cached address
-            is returned if it was stored within this radius of the queried position.
-        google_api_key_env: Name of the environment variable holding a Google Cloud API
-            key with the Geocoding API enabled. When set, Google is used as the
-            geocoding provider; otherwise Nominatim is used.
+    ``GeocodingProvider`` below satisfies this. Tests inject other implementations
+    (e.g. a fake with no network access) without needing to subclass it.
     """
 
-    match_radius_m: float = 200.0
-    google_api_key_env: str = "GOOGLE_CLOUD_API_KEY"
+    name: str
+
+    def geocode(self, address: str) -> tuple[float, float] | None: ...
+    def reverse(self, lat: float, lon: float) -> str | None: ...
 
 
 class GeocodingProvider:
@@ -72,6 +70,25 @@ class GeocodingProvider:
         """Reverse-geocode ``(lat, lon)`` to an address string, or ``None``."""
         loc = self._reverse_fn((lat, lon), language="en", exactly_one=True)
         return loc.address if loc is not None else None
+
+
+@dataclass
+class GeocodingConfig:
+    """Configuration parameters for reverse geocoding.
+
+    Attributes:
+        match_radius_m: Distance threshold for cache hits, in metres. A cached address
+            is returned if it was stored within this radius of the queried position.
+        google_api_key_env: Name of the environment variable holding a Google Cloud API
+            key with the Geocoding API enabled. When set, Google is used as the
+            geocoding provider; otherwise Nominatim is used.
+        provider: Geocoding provider to use directly, primarily for testing. If
+            ``None``, the provider is resolved via ``google_api_key_env``.
+    """
+
+    match_radius_m: float = 200.0
+    google_api_key_env: str = "GOOGLE_CLOUD_API_KEY"
+    provider: Provider | None = field(default=None, repr=False, compare=False)
 
 
 # --------------------------------------------------------------------------------------
@@ -129,7 +146,7 @@ def seed_geocode_cache(
     if config is None:
         config = GeocodingConfig()
 
-    provider = GeocodingProvider.from_env(config.google_api_key_env)
+    provider = config.provider or GeocodingProvider.from_env(config.google_api_key_env)
     with cache_db.open_db(cache_dir) as db:
         for address in addresses:
             pos = provider.geocode(address)
@@ -152,11 +169,8 @@ def lookup_geocode_cache(
     db: cache_db.CacheDatabase,
     pos: tuple[float, float],
     match_radius_m: float,
-) -> str | None:
+) -> tuple[bool, str | None]:
     """Look up a reverse-geocoded address in the cache.
-
-    First tries an exact match on the rounded coordinate key. If that misses, searches a
-    bounding box and returns the nearest entry within ``match_radius_m``.
 
     Args:
         db: Open cache database.
@@ -164,14 +178,17 @@ def lookup_geocode_cache(
         match_radius_m: Maximum distance in metres for a proximity hit.
 
     Returns:
-        Cached address string, or ``None`` if no entry is within ``match_radius_m``.
+        Tuple of:
+        - ``found``: whether this position has a cache entry.
+        - ``address``: the cached address, or ``None`` if the provider had no address
+          associated with ``pos``.
     """
     row = db.conn.execute(
         "SELECT display_name FROM geocode_cache WHERE lat=? AND lon=?",
         round_pos(pos),
     ).fetchone()
     if row:
-        return row[0]
+        return True, row[0]
 
     lat, lon = pos
     dlat = match_radius_m / utils.EARTH_M_PER_DEG
@@ -183,13 +200,13 @@ def lookup_geocode_cache(
         (lat - dlat, lat + dlat, lon - dlon, lon + dlon),
     ).fetchall()
     if not candidates:
-        return None
+        return False, None
 
     best = min(candidates, key=lambda r: geopy.distance.great_circle(pos, r[:2]).m)
     if geopy.distance.great_circle(pos, best[:2]).m <= match_radius_m:
-        return best[2]
+        return True, best[2]
 
-    return None
+    return False, None
 
 
 def store_geocode_cache(
@@ -244,21 +261,24 @@ def geocode_positions(
     """
     if config is None:
         config = GeocodingConfig()
-    unique = dict.fromkeys(positions)
+    unique: dict[tuple[float, float], str | None] = dict.fromkeys(positions)
 
     if cache_dir is None:
-        provider = GeocodingProvider.from_env(config.google_api_key_env)
+        provider = config.provider or GeocodingProvider.from_env(config.google_api_key_env)
         for pos in unique:
             unique[pos] = provider.reverse(*pos)
         return unique
 
     with cache_db.open_db(cache_dir) as db:
+        misses = []
         for pos in unique:
-            unique[pos] = lookup_geocode_cache(db, pos, config.match_radius_m)
+            found, addr = lookup_geocode_cache(db, pos, config.match_radius_m)
+            unique[pos] = addr
+            if not found:
+                misses.append(pos)
 
-        misses = [pos for pos, addr in unique.items() if addr is None]
         if misses:
-            provider = GeocodingProvider.from_env(config.google_api_key_env)
+            provider = config.provider or GeocodingProvider.from_env(config.google_api_key_env)
             for pos in misses:
                 name = provider.reverse(*pos)
                 store_geocode_cache(db, pos, name, provider.name)
