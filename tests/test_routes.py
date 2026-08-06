@@ -1,7 +1,6 @@
 """Tests for GPS route clustering."""
 
 import dataclasses
-from typing import Any, cast
 
 import gpx_fixtures as gf
 import numpy as np
@@ -493,7 +492,7 @@ def _insert_activity_rows(cache_dir, keys: list[tuple[str, int]]) -> None:
         with db.conn:
             db["activities"].insert_all(
                 [{"filename": fn, "segment": seg} for fn, seg in keys],
-                pk=cast(Any, ("filename", "segment")),
+                pk=("filename", "segment"),
             )
 
 

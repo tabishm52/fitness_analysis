@@ -5,7 +5,7 @@ import dataclasses
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from os import PathLike
-from typing import Any, cast
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -290,7 +290,7 @@ def parse_commute_file(
     if db is not None:
         db["commutes"].upsert_all(
             [split.to_db_dict() for split in results],
-            pk=cast(Any, ("filename", "segment")),
+            pk=("filename", "segment"),
         )
 
     return results, split_coords

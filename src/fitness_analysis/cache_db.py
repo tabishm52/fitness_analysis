@@ -9,9 +9,49 @@ from typing import Any, cast
 
 import pandas as pd
 import sqlite_utils
-from sqlite_utils.db import Table
+from sqlite_utils.db import DEFAULT, Default, Table
 
 DB_FILE = "fitness_cache.db"
+
+
+class CacheTable(Table):
+    """``Table`` with usable typing for the ``pk``/``replace`` params.
+
+    sqlite_utils leaves these unannotated with a ``DEFAULT`` sentinel default, so
+    pyright infers the param type as ``Default`` and rejects real values.
+    """
+
+    def upsert(
+        self,
+        record: dict,
+        pk: str | tuple[str, ...] | Default = DEFAULT,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Table:
+        # *args/**kwargs are LSP-compliance plumbing (the base signature has 14+
+        # positional params), not a real forwarding path.
+        return super().upsert(record, pk=cast(Any, pk), *args, **kwargs)
+
+    def upsert_all(
+        self,
+        records: Any,
+        pk: str | tuple[str, ...] | Default = DEFAULT,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Table:
+        return super().upsert_all(records, pk=cast(Any, pk), *args, **kwargs)
+
+    def insert_all(
+        self,
+        records: Any,
+        pk: str | tuple[str, ...] | Default = DEFAULT,
+        replace: bool | Default = DEFAULT,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Table:
+        return super().insert_all(
+            records, pk=cast(Any, pk), replace=cast(Any, replace), *args, **kwargs
+        )
 
 
 class CacheDatabase(sqlite_utils.Database):
@@ -23,8 +63,8 @@ class CacheDatabase(sqlite_utils.Database):
 
     conn: sqlite3.Connection
 
-    def __getitem__(self, table_name: str) -> Table:
-        return cast(Table, super().__getitem__(table_name))
+    def __getitem__(self, table_name: str) -> CacheTable:
+        return CacheTable(self, table_name)
 
 
 # --------------------------------------------------------------------------------------

@@ -1,7 +1,6 @@
 """Tests for Strava commute processing, splitting, and caching."""
 
 from datetime import datetime, timedelta
-from typing import Any, cast
 
 import gpx_fixtures as gf
 import numpy as np
@@ -85,9 +84,7 @@ def test_load_commutes_cache_groups_by_filename(tmp_path):
         segment=2,
     )
     with cache_db.open_db(tmp_path) as db:
-        db["commutes"].upsert_all(
-            [m1.to_db_dict(), m2.to_db_dict()], pk=cast(Any, ("filename", "segment"))
-        )
+        db["commutes"].upsert_all([m1.to_db_dict(), m2.to_db_dict()], pk=("filename", "segment"))
 
     cache = commute.load_commutes_cache(tmp_path)
     assert set(cache) == {"a.gpx"}
@@ -107,7 +104,7 @@ def test_invalidate_commutes_cache_none_clears_everything(tmp_path):
         filename="a.gpx",
     )
     with cache_db.open_db(tmp_path) as db:
-        db["commutes"].upsert(m.to_db_dict(), pk=cast(Any, ("filename", "segment")))
+        db["commutes"].upsert(m.to_db_dict(), pk=("filename", "segment"))
 
     commute.invalidate_commutes_cache(None, tmp_path)
 
@@ -124,7 +121,7 @@ def test_invalidate_commutes_cache_removes_only_listed_files(tmp_path):
             filename=fn,
         )
         with cache_db.open_db(tmp_path) as db:
-            db["commutes"].upsert(m.to_db_dict(), pk=cast(Any, ("filename", "segment")))
+            db["commutes"].upsert(m.to_db_dict(), pk=("filename", "segment"))
 
     commute.invalidate_commutes_cache(["a.gpx"], tmp_path)
 
@@ -144,7 +141,7 @@ def test_invalidate_commutes_cache_removes_only_listed_files_segment_parquets(tm
             segment=1,
         )
         with cache_db.open_db(tmp_path) as db:
-            db["commutes"].upsert(m.to_db_dict(), pk=cast(Any, ("filename", "segment")))
+            db["commutes"].upsert(m.to_db_dict(), pk=("filename", "segment"))
 
     commute.invalidate_commutes_cache(["a.gpx"], tmp_path)
 
@@ -163,7 +160,7 @@ def test_invalidate_commutes_cache_empty_list_is_noop(tmp_path):
         filename="a.gpx",
     )
     with cache_db.open_db(tmp_path) as db:
-        db["commutes"].upsert(m.to_db_dict(), pk=cast(Any, ("filename", "segment")))
+        db["commutes"].upsert(m.to_db_dict(), pk=("filename", "segment"))
 
     commute.invalidate_commutes_cache([], tmp_path)
 
@@ -181,7 +178,7 @@ def test_invalidate_commutes_cache_none_deletes_segment_parquets(tmp_path):
         segment=1,
     )
     with cache_db.open_db(tmp_path) as db:
-        db["commutes"].upsert(m.to_db_dict(), pk=cast(Any, ("filename", "segment")))
+        db["commutes"].upsert(m.to_db_dict(), pk=("filename", "segment"))
 
     commute.invalidate_commutes_cache(None, tmp_path)
 
@@ -197,7 +194,7 @@ def test_invalidate_commutes_cache_none_deletes_cluster_fingerprint(tmp_path):
         filename="a.gpx",
     )
     with cache_db.open_db(tmp_path) as db:
-        db["commutes"].upsert(m.to_db_dict(), pk=cast(Any, ("filename", "segment")))
+        db["commutes"].upsert(m.to_db_dict(), pk=("filename", "segment"))
         with db.conn:
             db["cluster_fingerprints"].insert({"table_name": "commutes", "fingerprint": "abc"})
             db["cluster_fingerprints"].insert({"table_name": "activities", "fingerprint": "xyz"})
@@ -219,7 +216,7 @@ def test_invalidate_commutes_cache_file_list_deletes_cluster_fingerprint(tmp_pat
             filename=fn,
         )
         with cache_db.open_db(tmp_path) as db:
-            db["commutes"].upsert(m.to_db_dict(), pk=cast(Any, ("filename", "segment")))
+            db["commutes"].upsert(m.to_db_dict(), pk=("filename", "segment"))
     with cache_db.open_db(tmp_path) as db:
         with db.conn:
             db["cluster_fingerprints"].insert({"table_name": "commutes", "fingerprint": "abc"})

@@ -7,7 +7,6 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from os import PathLike
 from pathlib import Path
-from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -217,7 +216,7 @@ def parse_activity_file(
     )
 
     if db is not None:
-        db["activities"].upsert(result.to_db_dict(), pk=cast(Any, ("filename", "segment")))
+        db["activities"].upsert(result.to_db_dict(), pk=("filename", "segment"))
 
     return result
 

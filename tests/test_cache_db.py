@@ -1,7 +1,5 @@
 """Tests for the SQLite cache database shared by the activities and commutes caches."""
 
-from typing import Any, cast
-
 import numpy as np
 import sqlite_utils
 
@@ -102,8 +100,8 @@ def test_delete_fingerprint_single_table(tmp_path):
                     {"table_name": "activities", "fingerprint": "abc"},
                     {"table_name": "commutes", "fingerprint": "def"},
                 ],
-                pk=cast(Any, "table_name"),
-                replace=cast(Any, True),
+                pk="table_name",
+                replace=True,
             )
             delete_fingerprint(db, "activities")
         rows = list(db["cluster_fingerprints"].rows)
@@ -118,8 +116,8 @@ def test_delete_fingerprint_all_tables(tmp_path):
                     {"table_name": "activities", "fingerprint": "abc"},
                     {"table_name": "commutes", "fingerprint": "def"},
                 ],
-                pk=cast(Any, "table_name"),
-                replace=cast(Any, True),
+                pk="table_name",
+                replace=True,
             )
             delete_fingerprint(db)
         assert list(db["cluster_fingerprints"].rows) == []
