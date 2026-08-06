@@ -107,6 +107,19 @@ def test_parse_record_cached_segment_hit(tmp_path):
     pd.testing.assert_frame_equal(df, segment)
 
 
+def test_cache_record_coerces_string_column_for_pyarrow(tmp_path):
+    """The GPX/FIT fixtures only ever produce numeric columns, so the object/string
+    coercion is otherwise only exercised by MyNetDiary sheets, not activity records."""
+    cache_dir = tmp_path / "cache"
+    df = pd.DataFrame({"latitude": [1.0, 2.0], "note": ["a", "b"]})
+
+    records.cache_record(df, "ride.gpx", 1, cache_dir)
+    cached = records.parse_record_cached("ride.gpx", 1, tmp_path, cache_dir)
+
+    assert cached["note"].tolist() == ["a", "b"]
+    assert cached["note"].dtype == "string"
+
+
 def test_parse_record_cached_fit_file(tmp_path):
     (tmp_path / "ride.fit").write_bytes(fit_fixtures.simple_ride(n=4))
     parsed = records.parse_record_cached("ride.fit", None, tmp_path)

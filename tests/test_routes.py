@@ -358,6 +358,97 @@ def test_compute_clusters_geocoding_populates_addresses():
     assert provider.reverse_calls  # confirms no real network provider was reached
 
 
+def test_compute_clusters_shared_endpoints_different_shapes_stay_separate():
+    """Two pairs sharing start/end land in one partition; only the near-duplicate pairs
+    within each shape should join a cluster, not the whole partition."""
+    s_lat, s_lon = 37.7749, -122.4194
+    e_lat, e_lon = s_lat - 0.01, s_lon  # ~1.1 km south
+    mid_lat, mid_lon = (s_lat + e_lat) / 2, s_lon
+
+    def straight(jitter_lon: float = 0.0) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "latitude": [s_lat, mid_lat, e_lat],
+                "longitude": [s_lon + jitter_lon, mid_lon + jitter_lon, e_lon + jitter_lon],
+            }
+        )
+
+    def bulge(jitter_lon: float = 0.0) -> pd.DataFrame:
+        # Same start/end as `straight`; the midpoint bulges ~200 m east, well past the
+        # default similarity tolerance but within length_ratio_max of the straight route.
+        return pd.DataFrame(
+            {
+                "latitude": [s_lat, mid_lat, e_lat],
+                "longitude": [
+                    s_lon + jitter_lon,
+                    mid_lon + 0.002274 + jitter_lon,
+                    e_lon + jitter_lon,
+                ],
+            }
+        )
+
+    activities = _activities(
+        [
+            {"filename": "a1.gpx", "description": "A1"},
+            {"filename": "a2.gpx", "description": "A2"},
+            {"filename": "b1.gpx", "description": "B1"},
+            {"filename": "b2.gpx", "description": "B2"},
+        ],
+        [
+            "2026-01-05 08:00:00",
+            "2026-01-06 08:00:00",
+            "2026-01-07 08:00:00",
+            "2026-01-08 08:00:00",
+        ],
+    )
+    config = routes.RouteClusterConfig(geocoding=None, min_samples=2)
+    preloaded: _PreloadedCoords = {
+        ("a1.gpx", None): straight(),
+        ("a2.gpx", None): straight(jitter_lon=0.0003),
+        ("b1.gpx", None): bulge(),
+        ("b2.gpx", None): bulge(jitter_lon=0.0003),
+    }
+
+    results = routes.compute_clusters(activities, None, "unused", None, preloaded, config)
+
+    assert results[0].cluster_id == results[1].cluster_id
+    assert results[2].cluster_id == results[3].cluster_id
+    assert results[0].cluster_id != results[2].cluster_id
+
+
+def test_compute_clusters_larger_name_cluster_outranks_smaller_gps_cluster():
+    route_a, route_b = _close_route_pair()
+    activities = _activities(
+        [
+            {"filename": "a.gpx", "description": "Ride A"},
+            {"filename": "b.gpx", "description": "Ride B"},
+            {"filename": "c.fit", "description": "Trainer Ride"},
+            {"filename": "d.fit", "description": "Trainer Ride"},
+            {"filename": "e.fit", "description": "Trainer Ride"},
+        ],
+        [
+            "2026-01-05 08:00:00",
+            "2026-01-06 08:00:00",
+            "2026-01-07 08:00:00",
+            "2026-01-08 08:00:00",
+            "2026-01-09 08:00:00",
+        ],
+    )
+    config = routes.RouteClusterConfig(geocoding=None, min_samples=2)
+    preloaded: _PreloadedCoords = {
+        ("a.gpx", None): route_a,
+        ("b.gpx", None): route_b,
+        ("c.fit", None): None,
+        ("d.fit", None): None,
+        ("e.fit", None): None,
+    }
+
+    results = routes.compute_clusters(activities, None, "unused", None, preloaded, config)
+
+    # The 3-member name cluster outranks the 2-member GPS cluster for id 0.
+    assert [r.cluster_id for r in results] == [1, 1, 0, 0, 0]
+
+
 # --------------------------------------------------------------------------------------
 # cluster_routes
 # --------------------------------------------------------------------------------------

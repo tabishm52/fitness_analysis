@@ -87,6 +87,15 @@ def test_rolling_linear_rate_trailing_window_is_causal():
     np.testing.assert_allclose(out.iloc[1:].to_numpy(), 2.0)
 
 
+def test_rolling_linear_rate_non_daily_grid_recovers_known_slope():
+    idx = pd.date_range("2026-01-01", periods=48, freq="h")
+    series = pd.Series(np.arange(48) * 3.0, index=idx)  # 3 units/hour == 72 units/day
+
+    out = rolling_linear_rate(series, window=24, min_periods=5, units="D", center=True)
+
+    np.testing.assert_allclose(out.dropna().to_numpy(), 72.0)
+
+
 def test_rolling_linear_rate_single_valid_point_in_window_is_nan():
     # A window with only one non-NaN observation has an undefined slope: the OLS
     # denominator (sum of squared centered positions) is zero.
@@ -147,6 +156,20 @@ def test_identify_inactive_periods_short_run_not_flagged():
     )
 
     assert not out.any()
+
+
+def test_identify_inactive_periods_run_exactly_min_duration_is_flagged():
+    # The 0,0,0 run spans exactly 2 minutes (start to end), matching min_duration; the
+    # `>=` comparison in the source must flag it rather than requiring a strictly
+    # longer run.
+    idx = pd.date_range("2026-01-01", periods=5, freq="min")
+    series = pd.Series([0, 0, 0, 5, 10], index=idx, dtype=float)
+
+    out = identify_inactive_periods(
+        series, activity_threshold=0.01, min_duration=pd.Timedelta(minutes=2)
+    )
+
+    assert out.tolist() == [True, True, True, False, False]
 
 
 def test_identify_inactive_periods_duplicate_timestamp_same_value_is_inactive():

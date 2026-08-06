@@ -188,6 +188,48 @@ def test_invalidate_commutes_cache_none_deletes_segment_parquets(tmp_path):
     assert not records.parquet_path("a.gpx", 1, tmp_path).exists()
 
 
+def test_invalidate_commutes_cache_none_deletes_cluster_fingerprint(tmp_path):
+    m = commute.CommuteMetrics(
+        date=pd.Timestamp("2026-01-05"),
+        description="A",
+        direction="Morning",
+        elapsed_time_s=100.0,
+        filename="a.gpx",
+    )
+    with cache_db.open_db(tmp_path) as db:
+        db["commutes"].upsert(m.to_db_dict(), pk=cast(Any, ("filename", "segment")))
+        with db.conn:
+            db["cluster_fingerprints"].insert({"table_name": "commutes", "fingerprint": "abc"})
+            db["cluster_fingerprints"].insert({"table_name": "activities", "fingerprint": "xyz"})
+
+    commute.invalidate_commutes_cache(None, tmp_path)
+
+    with cache_db.open_db(tmp_path) as db:
+        remaining = {r["table_name"] for r in db["cluster_fingerprints"].rows}
+    assert remaining == {"activities"}
+
+
+def test_invalidate_commutes_cache_file_list_deletes_cluster_fingerprint(tmp_path):
+    for fn in ("a.gpx", "b.gpx"):
+        m = commute.CommuteMetrics(
+            date=pd.Timestamp("2026-01-05"),
+            description="A",
+            direction="Morning",
+            elapsed_time_s=100.0,
+            filename=fn,
+        )
+        with cache_db.open_db(tmp_path) as db:
+            db["commutes"].upsert(m.to_db_dict(), pk=cast(Any, ("filename", "segment")))
+    with cache_db.open_db(tmp_path) as db:
+        with db.conn:
+            db["cluster_fingerprints"].insert({"table_name": "commutes", "fingerprint": "abc"})
+
+    commute.invalidate_commutes_cache(["a.gpx"], tmp_path)
+
+    with cache_db.open_db(tmp_path) as db:
+        assert list(db["cluster_fingerprints"].rows) == []
+
+
 # --------------------------------------------------------------------------------------
 # segment_metrics
 # --------------------------------------------------------------------------------------
@@ -221,6 +263,16 @@ def test_segment_metrics_excludes_stopped_time_from_moving_time():
     assert metrics.moving_time_s is not None
     assert metrics.elapsed_time_s is not None
     assert metrics.moving_time_s < metrics.elapsed_time_s
+
+
+def test_segment_metrics_afternoon_direction():
+    group = _leg(10, 12 * 3600, distance_start=0.0, distance_end=1.0)
+    activity = pd.Series({"Activity Name": "Bike home", "Filename": "ride.gpx"})
+
+    metrics = commute.segment_metrics(activity, group, None, commute.CommuteConfig())
+
+    # T0 + 12h = 20:00 UTC -> America/Los_Angeles (PST, UTC-8 in Jan) -> 12:00 local
+    assert metrics.direction == "Afternoon"
 
 
 def test_segment_metrics_no_distance_column_returns_none_distance():
@@ -340,6 +392,27 @@ def test_process_commute_csv_computes_metrics_from_csv_fields():
     # 16:00 UTC -> 11:00 America/New_York (EST, UTC-5 in Jan) -> Morning
     assert metrics.date == pd.Timestamp("2026-01-05 11:00:00")
     assert metrics.direction == "Morning"
+
+
+def test_process_commute_csv_afternoon_direction():
+    activity = pd.Series(
+        {
+            "Activity Name": "Bike commute",
+            "Distance": 8.0,
+            "Elapsed Time": 1500,
+            "Moving Time": 1400,
+            "Filename": float("nan"),
+        }
+    )
+    utc_date = pd.Timestamp("2026-01-05 20:00:00")
+
+    metrics = commute.process_commute_csv(
+        activity, utc_date, "America/New_York", commute.CommuteConfig()
+    )
+
+    # 20:00 UTC -> 15:00 America/New_York (EST, UTC-5 in Jan) -> Afternoon
+    assert metrics.date == pd.Timestamp("2026-01-05 15:00:00")
+    assert metrics.direction == "Afternoon"
 
 
 # --------------------------------------------------------------------------------------

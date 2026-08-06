@@ -138,6 +138,33 @@ def test_invalidate_activities_cache_empty_list_is_noop(tmp_path):
     assert set(strava.load_activities_cache(tmp_path)) == {"a.gpx"}
 
 
+def test_invalidate_activities_cache_none_deletes_cluster_fingerprint(tmp_path):
+    with cache_db.open_db(tmp_path) as db:
+        strava.parse_activity_file("a.gpx", pd.DataFrame(), strava.ActivitiesConfig(), db)
+        with db.conn:
+            db["cluster_fingerprints"].insert({"table_name": "activities", "fingerprint": "abc"})
+            db["cluster_fingerprints"].insert({"table_name": "commutes", "fingerprint": "xyz"})
+
+    strava.invalidate_activities_cache(None, tmp_path)
+
+    with cache_db.open_db(tmp_path) as db:
+        remaining = {r["table_name"] for r in db["cluster_fingerprints"].rows}
+    assert remaining == {"commutes"}
+
+
+def test_invalidate_activities_cache_file_list_deletes_cluster_fingerprint(tmp_path):
+    with cache_db.open_db(tmp_path) as db:
+        strava.parse_activity_file("a.gpx", pd.DataFrame(), strava.ActivitiesConfig(), db)
+        strava.parse_activity_file("b.gpx", pd.DataFrame(), strava.ActivitiesConfig(), db)
+        with db.conn:
+            db["cluster_fingerprints"].insert({"table_name": "activities", "fingerprint": "abc"})
+
+    strava.invalidate_activities_cache(["a.gpx"], tmp_path)
+
+    with cache_db.open_db(tmp_path) as db:
+        assert list(db["cluster_fingerprints"].rows) == []
+
+
 # --------------------------------------------------------------------------------------
 # parse_activity_file
 # --------------------------------------------------------------------------------------

@@ -2,14 +2,14 @@
 
 import os
 import time
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import mnd_fixtures as mf
 import pandas as pd
 import pytest
 
-from fitness_analysis import mynetdiary
+from fitness_analysis import mynetdiary, utils
 
 FILES = Path(__file__).parent / "files"
 XLS_EXPORT_DIR = FILES
@@ -175,6 +175,29 @@ def test_load_mnd_data_rejects_unexpected_weight_units(tmp_path):
 
     with pytest.raises(ValueError, match="Unexpected body weight units"):
         mynetdiary.load_mnd_data(export_dir, eer_func=lambda w: w)
+
+
+def test_load_mnd_data_calorie_outputs_on_settled_tail(tmp_path):
+    export_dir = tmp_path / "export"
+    n_days = 60
+    food = pd.DataFrame(
+        {
+            "Date & Time": [mf.T0 + timedelta(days=i) for i in range(n_days)],
+            "Calories, cals": 2000.0,
+        }
+    )
+    # A single zero-calorie row keeps the Exercise sheet non-empty (an empty sheet is
+    # dropped entirely by merge_excel_files) while contributing nothing to the sums.
+    exercise = pd.DataFrame({"Date & Time": [mf.T0], "Calories": [0.0]})
+    mf.write_mnd_export(export_dir, n_days=n_days, food=food, exercise=exercise)
+
+    _, calories = mynetdiary.load_mnd_data(export_dir, eer_func=lambda w: w * 0 + 2000)
+
+    # Settled tail: past the warm-up of every EWM/rolling window involved.
+    tail = calories.tail(10)
+    assert tail["net_recorded"].to_numpy() == pytest.approx(0.0, abs=1e-6)
+    assert tail["net_observed"].to_numpy() == pytest.approx(-utils.CAL_PER_LB_WEEK)
+    assert tail["accuracy"].to_numpy() == pytest.approx(2000 / (2000 - utils.CAL_PER_LB_WEEK))
 
 
 def test_load_mnd_data_tuning_changes_smoothing(tmp_path):
