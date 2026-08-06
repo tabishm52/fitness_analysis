@@ -369,6 +369,41 @@ def test_load_strava_activities_omits_addresses_when_geocoding_disabled(tmp_path
     assert "start_address" not in activities.columns
 
 
+def test_load_strava_activities_cache_hit_skips_reparsing(tmp_path):
+    pts = gf.line_route(gf.SF, gf.FAR, n=10)
+    rows = [
+        sfx.activity_row(datetime(2026, 1, 5, 8, 0), filename="activities/a.gpx"),
+        sfx.activity_row(datetime(2026, 1, 6, 8, 0), filename="activities/b.gpx"),
+    ]
+    sfx.write_export(
+        tmp_path,
+        rows,
+        {
+            "activities/a.gpx": gf.gpx_bytes(pts),
+            "activities/b.gpx": gf.gpx_bytes(gf.offset_route(pts)),
+        },
+    )
+    cache_dir = tmp_path / "cache"
+    config = strava.ActivitiesConfig(clustering=routes.RouteClusterConfig(geocoding=None))
+
+    first_activities, first_weekly = strava.load_strava_activities(
+        tmp_path, HOME_TZ, cache_dir, config
+    )
+
+    # Corrupt the source files; a cache hit (by filename, assumed immutable) must not
+    # touch them.
+    (tmp_path / "activities" / "a.gpx").write_bytes(b"not gpx")
+    (tmp_path / "activities" / "b.gpx").write_bytes(b"not gpx")
+
+    second_activities, second_weekly = strava.load_strava_activities(
+        tmp_path, HOME_TZ, cache_dir, config
+    )
+
+    pd.testing.assert_frame_equal(first_activities, second_activities)
+    pd.testing.assert_frame_equal(first_weekly, second_weekly)
+    assert second_activities["cluster_id"].tolist() == [0, 0]
+
+
 # --------------------------------------------------------------------------------------
 # load_power_curves
 # --------------------------------------------------------------------------------------

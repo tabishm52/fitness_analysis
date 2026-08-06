@@ -607,3 +607,45 @@ def test_load_commute_activities_gps_commute_with_clustering(tmp_path):
 
     assert "cluster_id" in commutes_df.columns
     assert spans_df is not None
+
+
+def test_load_commute_activities_cache_hit_skips_reparsing(tmp_path):
+    outbound = gf.line_route(gf.SF, gf.FAR, n=10)
+    gap_s = 3 * 3600  # exceeds CommuteConfig.delta (90 min), forcing a two-segment split
+    inbound = [
+        (offset_s + gap_s, lat, lon) for offset_s, lat, lon in gf.line_route(gf.FAR, gf.SF, n=10)
+    ]
+    rows = [
+        sfx.activity_row(
+            datetime(2026, 1, 5, 8, 0),
+            commute=True,
+            name="Round trip",
+            filename="activities/ride.gpx",
+        )
+    ]
+    sfx.write_export(tmp_path, rows, {"activities/ride.gpx": gf.gpx_bytes(outbound + inbound)})
+    cache_dir = tmp_path / "cache"
+    config = commute.CommuteConfig(
+        clustering=routes.RouteClusterConfig(geocoding=None), span_min_size=1
+    )
+
+    first_commutes, first_spans = commute.load_commute_activities(
+        tmp_path, HOME_TZ, cache_dir, config
+    )
+
+    assert first_commutes["segment"].tolist() == [1, 2]
+    assert records.parquet_path("activities/ride.gpx", 1, cache_dir).exists()
+    assert records.parquet_path("activities/ride.gpx", 2, cache_dir).exists()
+
+    # Corrupt the source file; a cache hit (by filename, assumed immutable) must not
+    # touch it.
+    (tmp_path / "activities" / "ride.gpx").write_bytes(b"not gpx")
+
+    second_commutes, second_spans = commute.load_commute_activities(
+        tmp_path, HOME_TZ, cache_dir, config
+    )
+
+    assert first_spans is not None
+    assert second_spans is not None
+    pd.testing.assert_frame_equal(first_commutes, second_commutes)
+    pd.testing.assert_frame_equal(first_spans, second_spans)
