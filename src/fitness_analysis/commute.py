@@ -53,7 +53,7 @@ class CommuteMetrics:
         description: Activity name from Strava.
         direction: ``"Morning"`` or ``"Afternoon"``.
         distance: Distance in miles, or ``None`` when GPS distance is absent.
-        elapsed_time_s: Total elapsed time in seconds.
+        elapsed_time_s: Total elapsed time in seconds, or ``None`` when absent.
         moving_time_s: Moving time in seconds, or ``None`` when absent.
         filename: Activity filename, or NaN for fileless activities.
         segment: 1-based split index, or ``None`` for single-segment activities.
@@ -63,7 +63,7 @@ class CommuteMetrics:
     description: str
     direction: str
     distance: float | None = None
-    elapsed_time_s: float
+    elapsed_time_s: float | None = None
     moving_time_s: float | None = None
     filename: str | float
     segment: int | None = None
@@ -571,7 +571,8 @@ def load_commute_activities(
     Returns:
         Tuple of:
         - ``commutes_df``: Summary metrics indexed by local date.
-        - ``spans_df``: Detected spans, or ``None`` when not configured.
+        - ``spans_df``: Detected spans, or ``None`` when not configured or when there
+          are no commutes.
     """
     if config is None:
         config = CommuteConfig()

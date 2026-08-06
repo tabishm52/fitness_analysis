@@ -219,6 +219,7 @@ def test_segment_metrics_excludes_stopped_time_from_moving_time():
     metrics = commute.segment_metrics(activity, group, None, config)
 
     assert metrics.moving_time_s is not None
+    assert metrics.elapsed_time_s is not None
     assert metrics.moving_time_s < metrics.elapsed_time_s
 
 
