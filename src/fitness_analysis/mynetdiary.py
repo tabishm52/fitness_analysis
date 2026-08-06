@@ -164,7 +164,7 @@ def _eer(
     coeffs: _EerCoeffs,
 ) -> pd.Series:
     # Calculate time series of age in fractional years
-    age = (cast(pd.DatetimeIndex, weight.index) - np.datetime64(dob)).days / 365.25
+    age = (pd.DatetimeIndex(weight.index) - np.datetime64(dob)).days / 365.25
     weight_kg = weight * utils.LBS_TO_KG
     height_cm = height * utils.IN_TO_CM
     return coeffs.base - coeffs.age * age + coeffs.weight * weight_kg + coeffs.height * height_cm

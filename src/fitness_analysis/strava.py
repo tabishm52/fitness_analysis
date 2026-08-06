@@ -448,15 +448,12 @@ def load_power_curves(
 
     rows = []
     index = []
-    for local_date, metrics in zip(calcs["local_date"], calcs.itertuples()):
-        if metrics.power_windows is None:
+    for local_date, windows, curve in zip(
+        calcs["local_date"], calcs["power_windows"], calcs["power_curve"]
+    ):
+        if windows is None:
             continue
-        rows.append(
-            pd.Series(
-                metrics.power_curve,
-                index=pd.to_timedelta(cast(np.ndarray, metrics.power_windows), unit="s"),
-            )
-        )
+        rows.append(pd.Series(curve, index=pd.to_timedelta(windows, unit="s")))
         index.append(local_date)
 
     if not rows:

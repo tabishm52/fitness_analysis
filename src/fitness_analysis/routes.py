@@ -751,8 +751,10 @@ def cluster_routes_cached(
             fns = list({k[0] for k in keys if k is not None})
             marks = ",".join("?" * len(fns))
             rows = db[table].rows_where(f"filename IN ({marks})", fns) if fns else []
-            lookup = {(r["filename"], r["segment"]): ClusterResult.from_db_dict(r) for r in rows}
-            results = [lookup.get(cast(tuple[str, int], k), ClusterResult()) for k in keys]
+            lookup: dict[tuple[str, int] | None, ClusterResult] = {
+                (r["filename"], r["segment"]): ClusterResult.from_db_dict(r) for r in rows
+            }
+            results = [lookup.get(k, ClusterResult()) for k in keys]
 
             return _cluster_frame(results, activities.index)
 
