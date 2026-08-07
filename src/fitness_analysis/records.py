@@ -264,7 +264,7 @@ def warm_records_cache(
 def invalidate_records_cache(
     files: Iterable[str | PathLike[str]] | None,
     segments: Iterable[int | None] | None,
-    cache_dir: str | PathLike[str],
+    cache_dir: str | PathLike[str] | None,
 ) -> None:
     """Invalidate the records (parquet) cache.
 
@@ -278,8 +278,10 @@ def invalidate_records_cache(
         segments: Per-file segment indices, or ``None`` to treat all files as whole-file
             activities.
         cache_dir: Cache directory passed to ``load_activity_records`` or
-            ``load_strava_activities``.
+            ``load_strava_activities``. If ``None``, this function does nothing.
     """
+    if cache_dir is None:
+        return
     parquet_dir = Path(cache_dir) / RECORDS_CACHE_DIR
     if not parquet_dir.exists():
         return

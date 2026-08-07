@@ -109,6 +109,10 @@ def test_invalidate_activities_cache_missing_db_is_noop(tmp_path):
     strava.invalidate_activities_cache(None, tmp_path)  # should not raise
 
 
+def test_invalidate_activities_cache_none_cache_dir_is_noop():
+    strava.invalidate_activities_cache(None, None)  # should not raise
+
+
 def test_invalidate_activities_cache_none_clears_everything(tmp_path):
     with cache_db.open_db(tmp_path) as db:
         strava.parse_activity_file("a.gpx", pd.DataFrame(), strava.ActivitiesConfig(), db)

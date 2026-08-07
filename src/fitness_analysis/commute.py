@@ -129,7 +129,7 @@ def load_commutes_cache(
 
 def invalidate_commutes_cache(
     files: Iterable[str] | None,
-    cache_dir: str | PathLike[str],
+    cache_dir: str | PathLike[str] | None,
 ) -> None:
     """Invalidate the commutes cache.
 
@@ -139,9 +139,10 @@ def invalidate_commutes_cache(
 
     Args:
         files: Activity filenames to remove. If None, the whole cache is cleared.
-        cache_dir: Cache directory passed to ``load_commute_activities``.
+        cache_dir: Cache directory passed to ``load_commute_activities``. If ``None``,
+            this function does nothing.
     """
-    if not cache_db.db_path(cache_dir).exists():
+    if cache_dir is None or not cache_db.db_path(cache_dir).exists():
         return
 
     with cache_db.open_db(cache_dir) as db:

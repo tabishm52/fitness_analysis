@@ -216,6 +216,10 @@ def test_invalidate_records_cache_missing_dir_is_noop(tmp_path):
     records.invalidate_records_cache(None, None, tmp_path / "cache")  # should not raise
 
 
+def test_invalidate_records_cache_none_cache_dir_is_noop():
+    records.invalidate_records_cache(None, None, None)  # should not raise
+
+
 def test_invalidate_records_cache_none_clears_everything(tmp_path):
     _write_gpx(tmp_path / "a.gpx")
     cache_dir = tmp_path / "cache"

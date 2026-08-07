@@ -122,15 +122,18 @@ def merge_excel_files_cached(
     return _read_cached_sheets(cache_path)
 
 
-def invalidate_mnd_cache(cache_dir: str | PathLike[str]) -> None:
+def invalidate_mnd_cache(cache_dir: str | PathLike[str] | None) -> None:
     """Invalidate the MyNetDiary parquet cache.
 
     Deletes the cache directory, forcing a full Excel re-read on the next call to
     ``load_mnd_data``.
 
     Args:
-        cache_dir: Cache directory passed to ``load_mnd_data``.
+        cache_dir: Cache directory passed to ``load_mnd_data``. If ``None``, this
+            function does nothing.
     """
+    if cache_dir is None:
+        return
     cache_path = Path(cache_dir) / MND_CACHE_DIR
     if cache_path.exists():
         shutil.rmtree(cache_path)

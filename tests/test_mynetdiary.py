@@ -109,6 +109,10 @@ def test_invalidate_mnd_cache_missing_dir_is_noop(tmp_path):
     mynetdiary.invalidate_mnd_cache(tmp_path / "cache")  # should not raise
 
 
+def test_invalidate_mnd_cache_none_cache_dir_is_noop():
+    mynetdiary.invalidate_mnd_cache(None)  # should not raise
+
+
 def test_invalidate_mnd_cache_deletes_cache_dir(tmp_path):
     export_dir = tmp_path / "export"
     cache_dir = tmp_path / "cache"

@@ -95,6 +95,10 @@ def test_invalidate_commutes_cache_missing_db_is_noop(tmp_path):
     commute.invalidate_commutes_cache(None, tmp_path)  # should not raise
 
 
+def test_invalidate_commutes_cache_none_cache_dir_is_noop():
+    commute.invalidate_commutes_cache(None, None)  # should not raise
+
+
 def test_invalidate_commutes_cache_none_clears_everything(tmp_path):
     m = commute.CommuteMetrics(
         date=pd.Timestamp("2026-01-05"),
