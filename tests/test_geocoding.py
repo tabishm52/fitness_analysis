@@ -1,5 +1,8 @@
 """Tests for reverse geocoding and its persistent SQLite cache."""
 
+import pytest
+from geopy.exc import GeocoderQueryError
+
 from fitness_analysis import cache_db, geocoding
 
 
@@ -22,6 +25,16 @@ class FakeProvider:
         pos = geocoding.round_pos((lat, lon))
         self.reverse_calls.append(pos)
         return self.addresses.get(pos)
+
+
+class FailingGeocoder:
+    """Duck-typed geopy ``Geocoder``: every call raises."""
+
+    def geocode(self, *_args, **_kwargs):
+        raise GeocoderQueryError("Injected exception")
+
+    def reverse(self, *_args, **_kwargs):
+        raise GeocoderQueryError("Injected exception")
 
 
 def _from_env_raises(monkeypatch):
@@ -57,6 +70,28 @@ def test_from_env_uses_nominatim_when_no_api_key(monkeypatch):
     monkeypatch.delenv("TEST_GOOGLE_API_KEY", raising=False)
     provider = geocoding.GeocodingProvider.from_env("TEST_GOOGLE_API_KEY")
     assert provider.name == "nominatim"
+
+
+# --------------------------------------------------------------------------------------
+# GeocodingProvider error propagation
+# --------------------------------------------------------------------------------------
+
+
+def test_geocoding_provider_reverse_raises_instead_of_returning_none(monkeypatch):
+    """A persistent provider error (e.g. billing) must not be swallowed to None."""
+    monkeypatch.setattr("geopy.extra.rate_limiter.RateLimiter._sleep", lambda self, seconds: None)
+    provider = geocoding.GeocodingProvider(FailingGeocoder(), min_delay_seconds=0, name="google")
+
+    with pytest.raises(GeocoderQueryError):
+        provider.reverse(37.7749, -122.4194)
+
+
+def test_geocoding_provider_geocode_raises_instead_of_returning_none(monkeypatch):
+    monkeypatch.setattr("geopy.extra.rate_limiter.RateLimiter._sleep", lambda self, seconds: None)
+    provider = geocoding.GeocodingProvider(FailingGeocoder(), min_delay_seconds=0, name="google")
+
+    with pytest.raises(GeocoderQueryError):
+        provider.geocode("123 Main St")
 
 
 # --------------------------------------------------------------------------------------
@@ -259,3 +294,27 @@ def test_geocode_positions_negative_result_not_requeried(tmp_path, monkeypatch):
     assert first == {pos: None}
     assert second == {pos: None}
     assert provider.reverse_calls == [pos]
+
+
+def test_geocode_positions_propagates_provider_failure_without_caching(tmp_path, monkeypatch):
+    """A provider error must not be cached as a negative result (see FailingGeocoder tests)."""
+    _from_env_raises(monkeypatch)
+
+    class RaisingProvider:
+        name = "fake"
+
+        def geocode(self, address):
+            raise GeocoderQueryError("Injected exception")
+
+        def reverse(self, lat, lon):
+            raise GeocoderQueryError("Injected exception")
+
+    config = geocoding.GeocodingConfig(provider=RaisingProvider())
+    pos = (37.7749, -122.4194)
+
+    with pytest.raises(GeocoderQueryError):
+        geocoding.geocode_positions([pos], tmp_path, config)
+
+    with cache_db.open_db(tmp_path) as db:
+        found, _ = geocoding.lookup_geocode_cache(db, pos, 200.0)
+    assert found is False

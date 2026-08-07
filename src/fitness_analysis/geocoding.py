@@ -32,8 +32,12 @@ class GeocodingProvider:
     """Rate-limited geocoder wrapping a geopy backend."""
 
     def __init__(self, geocoder: Geocoder, min_delay_seconds: float, name: str) -> None:
-        self._geocode_fn = RateLimiter(geocoder.geocode, min_delay_seconds=min_delay_seconds)
-        self._reverse_fn = RateLimiter(geocoder.reverse, min_delay_seconds=min_delay_seconds)
+        self._geocode_fn = RateLimiter(
+            geocoder.geocode, min_delay_seconds=min_delay_seconds, swallow_exceptions=False
+        )
+        self._reverse_fn = RateLimiter(
+            geocoder.reverse, min_delay_seconds=min_delay_seconds, swallow_exceptions=False
+        )
         self.name = name
 
     @classmethod
