@@ -137,8 +137,8 @@ def seed_geocode_cache(
 ) -> None:
     """Forward-geocode address strings and store results in the cache.
 
-    Forward-geocodes each address to coordinates, then reverse-geocodes those
-    coordinates to store the provider's normalized display name.
+    Forward-geocodes each address to coordinates, then caches the input address
+    string itself as the display name, tagged with provider ``"seeded"``.
 
     Args:
         addresses: Address strings to seed (e.g. ``["123 Main St, City"]``).
