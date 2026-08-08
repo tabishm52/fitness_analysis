@@ -5,11 +5,15 @@ import hashlib
 from collections.abc import Iterable
 from os import PathLike
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pandas as pd
 import pwlf
 from scipy.optimize import differential_evolution
+
+if TYPE_CHECKING:
+    from numpy import _TD64Unit
 
 PIECEWISE_CACHE_DIR = "piecewise_fit"
 
@@ -30,7 +34,9 @@ _DE_KWARGS = dict(
 )
 
 
-def _to_seconds(series: pd.Series, units: str) -> tuple[pd.Series, pd.Timestamp, np.ndarray, float]:
+def _to_seconds(
+    series: pd.Series, units: _TD64Unit
+) -> tuple[pd.Series, pd.Timestamp, np.ndarray, float]:
     """Common setup shared by every piecewise fit entry point."""
     clean = series.dropna()
     t0 = clean.index[0]
@@ -101,7 +107,7 @@ def _build_result(
 def piecewise_fit_fixed(
     series: pd.Series,
     n_segments: int,
-    units: str,
+    units: _TD64Unit,
     min_segment_duration: pd.Timedelta = pd.Timedelta(0),
 ) -> pd.DataFrame:
     """Fit a piecewise linear regression with a fixed number of segments.
@@ -135,7 +141,7 @@ def piecewise_fit_fixed(
 def piecewise_fit_with_breaks(
     series: pd.Series,
     breaks: Iterable[pd.Timestamp],
-    units: str,
+    units: _TD64Unit,
 ) -> pd.DataFrame:
     """Fit a piecewise linear regression with specified breakpoints.
 
@@ -157,7 +163,7 @@ def piecewise_fit_with_breaks(
 
 def piecewise_fit_auto(
     series: pd.Series,
-    units: str,
+    units: _TD64Unit,
     max_segments: int = 6,
     min_segment_duration: pd.Timedelta = pd.Timedelta(0),
 ) -> pd.DataFrame:
@@ -206,7 +212,7 @@ def piecewise_fit_auto(
 
 def piecewise_fit_cached(
     series: pd.Series,
-    units: str,
+    units: _TD64Unit,
     max_segments: int = 6,
     min_segment_duration: pd.Timedelta = pd.Timedelta(0),
     cache_dir: str | PathLike[str] | None = None,
@@ -240,7 +246,7 @@ def piecewise_fit_cached(
     key = hashlib.md5(
         clean.to_numpy().tobytes()
         + clean.index.to_numpy().tobytes()
-        + units.encode()
+        + cast(str, units).encode()
         + str(max_segments).encode()
         + str(min_segment_duration).encode()
     ).hexdigest()[:16]

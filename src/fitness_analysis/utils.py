@@ -2,12 +2,16 @@
 
 import functools
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 import ruptures as rpt
 import timezonefinder
 from sklearn.preprocessing import StandardScaler
+
+if TYPE_CHECKING:
+    from numpy import _TD64Unit
 
 # Unit conversion factors
 KM_TO_MI = 1 / 1.609344
@@ -62,7 +66,7 @@ def rolling_linear_rate(
     series: pd.Series,
     window: int,
     min_periods: int,
-    units: str,
+    units: _TD64Unit,
     *,
     center: bool = True,
 ) -> pd.Series:
@@ -98,7 +102,7 @@ def rolling_linear_rate(
         denom = pm @ pm
         if denom == 0:  # Single valid observation in window; slope is undefined
             return np.nan
-        return units_per_step * (pm @ arr[valid]) / denom
+        return float(units_per_step * (pm @ arr[valid]) / denom)
 
     roller = series.rolling(window, min_periods=min_periods, center=center)
     return roller.apply(_slope, raw=True)
