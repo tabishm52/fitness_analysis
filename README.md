@@ -9,17 +9,11 @@ For MyNetDiary, the module assumes a directory of separate `MyNetDiary_Year_XXXX
 
 ## Installation
 
-First install [activity-parser](https://github.com/tabishm52/activity_parser):
-
-```bash
-pip install activity-parser
-```
-
-Then install fitness-analysis:
-
 ```bash
 pip install git+https://github.com/tabishm52/fitness_analysis.git
 ```
+
+This pulls in [activity-parser](https://github.com/tabishm52/activity_parser) automatically as a declared dependency.
 
 ## Usage
 
@@ -38,7 +32,7 @@ Other capabilities:
 - `load_activity_records` / `load_activity_coords` — load parsed FIT/TCX/GPX records or trimmed lat/lon data for a set of activity files.
 - `cluster_routes` — cluster bicycle activities by GPS route similarity (Fréchet distance) or activity name.
 - `geocode_positions` / `seed_geocode_cache` — reverse/forward geocode GPS positions into addresses.
-- `piecewise_fit` / `piecewise_fit_auto` — piecewise linear regression on a time series, with automatic breakpoint/segment-count selection.
+- `piecewise_fit_fixed` / `piecewise_fit_auto` — piecewise linear regression on a time series, with automatic breakpoint/segment-count selection. `piecewise_fit_cached` wraps these with disk caching.
 
 Most loaders cache their results to disk (Parquet or SQLite) and are paired with an `invalidate_*_cache` function to force a refresh.
 
