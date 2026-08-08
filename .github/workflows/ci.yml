@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 8,22 * *"
+  workflow_dispatch:
+
+env:
+  # activity-parser's { workspace = true } source only resolves inside the full
+  # workspace checkout; fall back to PyPI since CI checks out this repo alone.
+  UV_NO_SOURCES: "1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+      - run: uv sync
+      - run: uv run pre-commit run --all-files
+      - run: uv build

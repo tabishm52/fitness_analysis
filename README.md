@@ -1,5 +1,9 @@
 # fitness-analysis
 
+[![CI](https://github.com/tabishm52/fitness_analysis/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tabishm52/fitness_analysis/actions/workflows/ci.yml)
+[![Python versions](https://img.shields.io/badge/python-3.14%2B-blue)](pyproject.toml)
+[![License](https://img.shields.io/github/license/tabishm52/fitness_analysis)](LICENSE)
+
 Analysis tools for fitness activity data from Strava and MyNetDiary.
 
 Provides functions for loading and processing MyNetDiary and Strava fitness data into Pandas DataFrames that are convenient for analysis and plotting.
@@ -35,7 +39,3 @@ Other capabilities:
 - `piecewise_fit_fixed` / `piecewise_fit_auto` — piecewise linear regression on a time series, with automatic breakpoint/segment-count selection. `piecewise_fit_cached` wraps these with disk caching.
 
 Most loaders cache their results to disk (Parquet or SQLite) and are paired with an `invalidate_*_cache` function to force a refresh.
-
-## License
-
-MIT
